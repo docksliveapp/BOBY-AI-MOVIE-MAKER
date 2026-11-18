@@ -1,0 +1,12 @@
+{
+  "projectId": "boby-ai-movie-maker",
+  "appId": "1:58854001200:web:3954ba3361ebba1f85fbf5",
+  "apiKey": "AIzaSyAdARGOMPPHZzygGHuo1GnIzlUcr_LPfjg",
+  "authDomain": "boby-ai-movie-maker.firebaseapp.com",
+  "firestoreDatabaseId": "ai-studio-bobyaimoviemaker-dbc77ce9-bc43-4c7f-8fc1-16c58560e643",
+  "storageBucket": "boby-ai-movie-maker.firebasestorage.app",
+  "messagingSenderId": "58854001200",
+  "measurementId": "",
+  "oAuthClientId": "58854001200-pq4qgepq1c9m710u81hehm6uuhjsprvl.apps.googleusercontent.com",
+  "recaptchaSiteKey": ""
+}

@@ -1,0 +1,338 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Pillar 4.1: Global Default-Deny Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Phase 3: Hardened Global Primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidLanguageList(langs) {
+      return langs is list
+        && langs.size() >= 1
+        && langs.size() <= 8
+        && langs[0] is string
+        && langs[0].size() >= 2
+        && langs[0].size() <= 32
+        && langs.hasOnly(['Urdu', 'English', 'Arabic', 'Hindi', 'Spanish', 'Turkish', 'French', 'Chinese']);
+    }
+
+    // Pillar 2: Validation Blueprint for ShowProfile
+    function isValidShowProfile(data) {
+      return data.keys().hasAll([
+          'ownerId', 'title', 'titleIdeaPrompt', 'logline', 'contentMode',
+          'visualStyle', 'aspectRatio', 'fps', 'resolution', 'languages',
+          'includeIntro', 'includeEndCredits', 'includeTrailer',
+          'storyPrompt', 'thumbnailAssetId', 'characterCount',
+          'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId', 'title', 'titleIdeaPrompt', 'logline', 'contentMode',
+          'visualStyle', 'aspectRatio', 'fps', 'resolution', 'languages',
+          'includeIntro', 'includeEndCredits', 'includeTrailer',
+          'storyPrompt', 'thumbnailAssetId', 'characterCount',
+          'createdAt', 'updatedAt'
+        ])
+        && data.ownerId is string
+        && data.ownerId.size() >= 1
+        && data.ownerId.size() <= 128
+        && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.ownerId == request.auth.uid
+        && data.title is string
+        && data.title.size() >= 1
+        && data.title.size() <= 160
+        && data.titleIdeaPrompt is string
+        && data.titleIdeaPrompt.size() <= 1000
+        && data.logline is string
+        && data.logline.size() <= 600
+        && data.contentMode is string
+        && data.contentMode.size() <= 32
+        && data.contentMode in ['cartoon_3d', 'human_movie', 'music_video', 'social_reel']
+        && data.visualStyle is string
+        && data.visualStyle.size() <= 32
+        && data.visualStyle in ['pixar_3d', 'hollywood_live', 'anime', 'hyper_drama', 'film_noir', 'cyberpunk_neon']
+        && data.aspectRatio is string
+        && data.aspectRatio.size() <= 16
+        && data.aspectRatio in ['16:9', '9:16', '1:1', '2.39:1']
+        && data.fps is int
+        && data.fps in [24, 30, 60]
+        && data.resolution is string
+        && data.resolution.size() <= 16
+        && data.resolution in ['720p', '1080p', '4K', '8K']
+        && isValidLanguageList(data.languages)
+        && data.includeIntro is bool
+        && data.includeEndCredits is bool
+        && data.includeTrailer is bool
+        && data.storyPrompt is string
+        && data.storyPrompt.size() <= 8000
+        && data.thumbnailAssetId is string
+        && data.thumbnailAssetId.size() <= 160
+        && data.characterCount is int
+        && data.characterCount >= 0
+        && data.characterCount <= 100
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // Pillar 2: Validation Blueprint for CharacterActor
+    function isValidCharacterActor(data, showId) {
+      return data.keys().hasAll([
+          'showId', 'ownerId', 'name', 'age', 'relation', 'visualPrompt',
+          'faceLocked', 'lockedFaceSignature', 'lockedFaceAssetId',
+          'voicePersona', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'showId', 'ownerId', 'name', 'age', 'relation', 'visualPrompt',
+          'faceLocked', 'lockedFaceSignature', 'lockedFaceAssetId',
+          'voicePersona', 'createdAt', 'updatedAt'
+        ])
+        && data.showId is string
+        && data.showId.size() >= 1
+        && data.showId.size() <= 128
+        && data.showId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.showId == showId
+        && data.ownerId is string
+        && data.ownerId.size() >= 1
+        && data.ownerId.size() <= 128
+        && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.ownerId == request.auth.uid
+        && data.name is string
+        && data.name.size() >= 1
+        && data.name.size() <= 100
+        && data.age is string
+        && data.age.size() >= 1
+        && data.age.size() <= 40
+        && data.relation is string
+        && data.relation.size() >= 1
+        && data.relation.size() <= 80
+        && data.visualPrompt is string
+        && data.visualPrompt.size() >= 1
+        && data.visualPrompt.size() <= 1200
+        && data.faceLocked is bool
+        && data.lockedFaceSignature is string
+        && data.lockedFaceSignature.size() <= 1200
+        && data.lockedFaceAssetId is string
+        && data.lockedFaceAssetId.size() <= 160
+        && data.voicePersona is string
+        && data.voicePersona.size() <= 24
+        && data.voicePersona in ['Puck', 'Charon', 'Kore', 'Fenrir', 'Zephyr']
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // Pillar 2: Validation Blueprint for RenderJob
+    function isValidRenderJob(data) {
+      return data.keys().hasAll([
+          'ownerId', 'showId', 'showTitle', 'episodeTitle', 'status',
+          'currentStepLabel', 'completedSteps', 'totalSteps', 'retryCount',
+          'aspectRatio', 'fps', 'resolution', 'languages', 'sceneCount',
+          'zipAssetId', 'thumbnailAssetId', 'checkpointKey',
+          'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId', 'showId', 'showTitle', 'episodeTitle', 'status',
+          'currentStepLabel', 'completedSteps', 'totalSteps', 'retryCount',
+          'aspectRatio', 'fps', 'resolution', 'languages', 'sceneCount',
+          'zipAssetId', 'thumbnailAssetId', 'checkpointKey',
+          'createdAt', 'updatedAt'
+        ])
+        && data.ownerId is string
+        && data.ownerId.size() >= 1
+        && data.ownerId.size() <= 128
+        && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.ownerId == request.auth.uid
+        && data.showId is string
+        && data.showId.size() >= 1
+        && data.showId.size() <= 128
+        && data.showId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.showTitle is string
+        && data.showTitle.size() >= 1
+        && data.showTitle.size() <= 160
+        && data.episodeTitle is string
+        && data.episodeTitle.size() >= 1
+        && data.episodeTitle.size() <= 160
+        && data.status is string
+        && data.status.size() <= 24
+        && data.status in ['queued', 'running', 'paused', 'error', 'completed']
+        && data.currentStepLabel is string
+        && data.currentStepLabel.size() <= 240
+        && data.completedSteps is int
+        && data.completedSteps >= 0
+        && data.completedSteps <= 500
+        && data.totalSteps is int
+        && data.totalSteps >= 1
+        && data.totalSteps <= 500
+        && data.retryCount is int
+        && data.retryCount >= 0
+        && data.retryCount <= 50
+        && data.aspectRatio is string
+        && data.aspectRatio.size() <= 16
+        && data.aspectRatio in ['16:9', '9:16', '1:1', '2.39:1']
+        && data.fps is int
+        && data.fps in [24, 30, 60]
+        && data.resolution is string
+        && data.resolution.size() <= 16
+        && data.resolution in ['720p', '1080p', '4K', '8K']
+        && isValidLanguageList(data.languages)
+        && data.sceneCount is int
+        && data.sceneCount >= 1
+        && data.sceneCount <= 30
+        && data.zipAssetId is string
+        && data.zipAssetId.size() <= 160
+        && data.thumbnailAssetId is string
+        && data.thumbnailAssetId.size() <= 160
+        && data.checkpointKey is string
+        && data.checkpointKey.size() <= 160
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // Collection 1: /shows/{showId}
+    match /shows/{showId} {
+      allow get: if isVerifiedUser()
+        && isValidId(showId)
+        && existing().ownerId == request.auth.uid;
+
+      allow list: if isVerifiedUser()
+        && existing().ownerId == request.auth.uid;
+
+      allow create: if isVerifiedUser()
+        && isValidId(showId)
+        && isValidShowProfile(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isVerifiedUser()
+        && isValidId(showId)
+        && isValidShowProfile(incoming())
+        && existing().ownerId == request.auth.uid
+        && incoming().ownerId == existing().ownerId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          // Action 1: Update Show Details & Production Settings
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'title', 'titleIdeaPrompt', 'logline', 'contentMode',
+            'visualStyle', 'aspectRatio', 'fps', 'resolution', 'languages',
+            'includeIntro', 'includeEndCredits', 'includeTrailer',
+            'storyPrompt', 'thumbnailAssetId', 'characterCount', 'updatedAt'
+          ])
+        );
+
+      allow delete: if isVerifiedUser()
+        && isValidId(showId)
+        && existing().ownerId == request.auth.uid;
+
+      // Subcollection 2: /shows/{showId}/characters/{characterId} (Pillar 1 Master Gate)
+      match /characters/{characterId} {
+        allow get: if isVerifiedUser()
+          && isValidId(showId)
+          && isValidId(characterId)
+          && existing().ownerId == request.auth.uid
+          && exists(/databases/$(database)/documents/shows/$(showId))
+          && get(/databases/$(database)/documents/shows/$(showId)).data.ownerId == request.auth.uid;
+
+        allow list: if isVerifiedUser()
+          && existing().ownerId == request.auth.uid
+          && existing().showId == showId;
+
+        allow create: if isVerifiedUser()
+          && isValidId(showId)
+          && isValidId(characterId)
+          && isValidCharacterActor(incoming(), showId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && exists(/databases/$(database)/documents/shows/$(showId))
+          && get(/databases/$(database)/documents/shows/$(showId)).data.ownerId == request.auth.uid;
+
+        allow update: if isVerifiedUser()
+          && isValidId(showId)
+          && isValidId(characterId)
+          && isValidCharacterActor(incoming(), showId)
+          && existing().ownerId == request.auth.uid
+          && incoming().ownerId == existing().ownerId
+          && incoming().showId == existing().showId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && exists(/databases/$(database)/documents/shows/$(showId))
+          && get(/databases/$(database)/documents/shows/$(showId)).data.ownerId == request.auth.uid
+          && (
+            // Action 1: Lock/Update Character Face & Details
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'name', 'age', 'relation', 'visualPrompt', 'faceLocked',
+              'lockedFaceSignature', 'lockedFaceAssetId', 'voicePersona', 'updatedAt'
+            ])
+          );
+
+        allow delete: if isVerifiedUser()
+          && isValidId(showId)
+          && isValidId(characterId)
+          && existing().ownerId == request.auth.uid
+          && exists(/databases/$(database)/documents/shows/$(showId))
+          && get(/databases/$(database)/documents/shows/$(showId)).data.ownerId == request.auth.uid;
+      }
+    }
+
+    // Collection 3: /renderJobs/{jobId}
+    match /renderJobs/{jobId} {
+      allow get: if isVerifiedUser()
+        && isValidId(jobId)
+        && existing().ownerId == request.auth.uid;
+
+      allow list: if isVerifiedUser()
+        && existing().ownerId == request.auth.uid;
+
+      allow create: if isVerifiedUser()
+        && isValidId(jobId)
+        && isValidRenderJob(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/shows/$(incoming().showId))
+        && get(/databases/$(database)/documents/shows/$(incoming().showId)).data.ownerId == request.auth.uid;
+
+      allow update: if isVerifiedUser()
+        && isValidId(jobId)
+        && isValidRenderJob(incoming())
+        && existing().ownerId == request.auth.uid
+        && incoming().ownerId == existing().ownerId
+        && incoming().showId == existing().showId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        // Pillar 4.6: Terminal State Locking — once completed, job is immutable
+        && existing().status != 'completed'
+        && (
+          // Action 1: Pipeline Progress, Pause/Resume, Retry, or Completion
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'status', 'currentStepLabel', 'completedSteps', 'totalSteps',
+            'retryCount', 'sceneCount', 'zipAssetId', 'thumbnailAssetId',
+            'checkpointKey', 'updatedAt'
+          ])
+        );
+
+      allow delete: if isVerifiedUser()
+        && isValidId(jobId)
+        && existing().ownerId == request.auth.uid;
+    }
+  }
+}

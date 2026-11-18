@@ -1,0 +1,341 @@
+{
+  "entities": {
+    "ShowProfile": {
+      "title": "ShowProfile",
+      "description": "A movie, web series, cartoon, music video, or social media reel production profile owned by a studio user.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the creator who owns this show.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "description": "Official title of the show, movie, or series.",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "titleIdeaPrompt": {
+          "type": "string",
+          "description": "Prompt entered in Section 1 for title generation.",
+          "maxLength": 1000
+        },
+        "logline": {
+          "type": "string",
+          "description": "Short summary or viral hook for the production.",
+          "maxLength": 600
+        },
+        "contentMode": {
+          "type": "string",
+          "description": "Primary production format.",
+          "enum": ["cartoon_3d", "human_movie", "music_video", "social_reel"]
+        },
+        "visualStyle": {
+          "type": "string",
+          "description": "Visual look and rendering filter.",
+          "enum": ["pixar_3d", "hollywood_live", "anime", "hyper_drama", "film_noir", "cyberpunk_neon"]
+        },
+        "aspectRatio": {
+          "type": "string",
+          "description": "Target frame aspect ratio.",
+          "enum": ["16:9", "9:16", "1:1", "2.39:1"]
+        },
+        "fps": {
+          "type": "integer",
+          "description": "Target frame rate in frames per second.",
+          "enum": [24, 30, 60]
+        },
+        "resolution": {
+          "type": "string",
+          "description": "Output mastering resolution.",
+          "enum": ["720p", "1080p", "4K", "8K"]
+        },
+        "languages": {
+          "type": "array",
+          "description": "Selected voiceover localization languages (1 to 8).",
+          "enum": ["Urdu", "English", "Arabic", "Hindi", "Spanish", "Turkish", "French", "Chinese"]
+        },
+        "includeIntro": {
+          "type": "boolean",
+          "description": "Whether to render intro_sequence.mp4."
+        },
+        "includeEndCredits": {
+          "type": "boolean",
+          "description": "Whether to render end_credits.mp4."
+        },
+        "includeTrailer": {
+          "type": "boolean",
+          "description": "Whether to render trailer.mp4."
+        },
+        "storyPrompt": {
+          "type": "string",
+          "description": "Main story, drama plot, or song lyrics prompt.",
+          "maxLength": 8000
+        },
+        "thumbnailAssetId": {
+          "type": "string",
+          "description": "Asset key referencing the cover thumbnail in MediaVault or static assets.",
+          "maxLength": 160
+        },
+        "characterCount": {
+          "type": "integer",
+          "description": "Number of characters registered in this show."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when last updated."
+        }
+      },
+      "required": [
+        "ownerId",
+        "title",
+        "titleIdeaPrompt",
+        "logline",
+        "contentMode",
+        "visualStyle",
+        "aspectRatio",
+        "fps",
+        "resolution",
+        "languages",
+        "includeIntro",
+        "includeEndCredits",
+        "includeTrailer",
+        "storyPrompt",
+        "thumbnailAssetId",
+        "characterCount",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "CharacterActor": {
+      "title": "CharacterActor",
+      "description": "Prompt-driven character actor with locked face descriptor belonging to a ShowProfile.",
+      "type": "object",
+      "properties": {
+        "showId": {
+          "type": "string",
+          "description": "Parent ShowProfile document ID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the owner.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "description": "Character display name.",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "age": {
+          "type": "string",
+          "description": "Character age label.",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "relation": {
+          "type": "string",
+          "description": "Role or family/drama relation (e.g., Hero, Father, Mother, Villain).",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "visualPrompt": {
+          "type": "string",
+          "description": "Prompt describing facial features, attire, and demeanor.",
+          "minLength": 1,
+          "maxLength": 1200
+        },
+        "faceLocked": {
+          "type": "boolean",
+          "description": "Whether a canonical face option has been locked for scene consistency."
+        },
+        "lockedFaceSignature": {
+          "type": "string",
+          "description": "Canonical locked facial embedding descriptor injected into every scene.",
+          "maxLength": 1200
+        },
+        "lockedFaceAssetId": {
+          "type": "string",
+          "description": "MediaVault asset ID for the locked face image.",
+          "maxLength": 160
+        },
+        "voicePersona": {
+          "type": "string",
+          "description": "Assigned Gemini TTS / studio voice persona.",
+          "enum": ["Puck", "Charon", "Kore", "Fenrir", "Zephyr"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when last updated."
+        }
+      },
+      "required": [
+        "showId",
+        "ownerId",
+        "name",
+        "age",
+        "relation",
+        "visualPrompt",
+        "faceLocked",
+        "lockedFaceSignature",
+        "lockedFaceAssetId",
+        "voicePersona",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "RenderJob": {
+      "title": "RenderJob",
+      "description": "Background multi-scene production job with checkpoint telemetry and ZIP archive reference.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the owner.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "showId": {
+          "type": "string",
+          "description": "Associated ShowProfile ID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "showTitle": {
+          "type": "string",
+          "description": "Title of the parent show.",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "episodeTitle": {
+          "type": "string",
+          "description": "Title of the episode or video render.",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "status": {
+          "type": "string",
+          "description": "Current pipeline state (completed is terminal).",
+          "enum": ["queued", "running", "paused", "error", "completed"]
+        },
+        "currentStepLabel": {
+          "type": "string",
+          "description": "Human-readable progress step description.",
+          "maxLength": 240
+        },
+        "completedSteps": {
+          "type": "integer",
+          "description": "Completed pipeline units."
+        },
+        "totalSteps": {
+          "type": "integer",
+          "description": "Total pipeline units."
+        },
+        "retryCount": {
+          "type": "integer",
+          "description": "Cumulative automatic retries executed."
+        },
+        "aspectRatio": {
+          "type": "string",
+          "enum": ["16:9", "9:16", "1:1", "2.39:1"]
+        },
+        "fps": {
+          "type": "integer",
+          "enum": [24, 30, 60]
+        },
+        "resolution": {
+          "type": "string",
+          "enum": ["720p", "1080p", "4K", "8K"]
+        },
+        "languages": {
+          "type": "array",
+          "enum": ["Urdu", "English", "Arabic", "Hindi", "Spanish", "Turkish", "French", "Chinese"]
+        },
+        "sceneCount": {
+          "type": "integer",
+          "description": "Number of sequential scenes rendered."
+        },
+        "zipAssetId": {
+          "type": "string",
+          "description": "MediaVault key for the exported universal ZIP bundle.",
+          "maxLength": 160
+        },
+        "thumbnailAssetId": {
+          "type": "string",
+          "description": "MediaVault key for thumbnail preview.",
+          "maxLength": 160
+        },
+        "checkpointKey": {
+          "type": "string",
+          "description": "MediaVault checkpoint key for crash-proof resume.",
+          "maxLength": 160
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "ownerId",
+        "showId",
+        "showTitle",
+        "episodeTitle",
+        "status",
+        "currentStepLabel",
+        "completedSteps",
+        "totalSteps",
+        "retryCount",
+        "aspectRatio",
+        "fps",
+        "resolution",
+        "languages",
+        "sceneCount",
+        "zipAssetId",
+        "thumbnailAssetId",
+        "checkpointKey",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/shows/{showId}": {
+      "schema": { "$ref": "#/entities/ShowProfile" },
+      "description": "Top-level production profiles owned by authenticated users."
+    },
+    "/shows/{showId}/characters/{characterId}": {
+      "schema": { "$ref": "#/entities/CharacterActor" },
+      "description": "Character roster subcollection scoped to a parent ShowProfile."
+    },
+    "/renderJobs/{jobId}": {
+      "schema": { "$ref": "#/entities/RenderJob" },
+      "description": "Render queue jobs and completed download records owned by authenticated users."
+    }
+  }
+}

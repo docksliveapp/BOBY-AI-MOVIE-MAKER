@@ -1,0 +1,6 @@
+{
+  "name": "BOBY AI MOVIE MAKER",
+  "description": "Zero-friction prompt-driven AI movie, web series, cartoon, and social video studio with automated multi-scene rendering and universal ZIP export.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

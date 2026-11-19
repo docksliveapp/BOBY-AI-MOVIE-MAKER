@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { Download, Smartphone, WifiOff, X } from 'lucide-react';
+import { CloudUpload, Download, RefreshCw, Smartphone, WifiOff } from 'lucide-react';
 import { useOnlineStatus, usePWAInstall } from '../hooks/usePWAInstall';
+import { StudioModal } from './StudioModal';
 
 export const PWAInstallButton: React.FC = () => {
   const { isInstallable, isInstalled, isIOS, install } = usePWAInstall();
@@ -15,10 +16,11 @@ export const PWAInstallButton: React.FC = () => {
       <button
         type="button"
         onClick={install}
-        className="hidden sm:inline-flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3.5 py-2 text-xs font-semibold text-amber-300 hover:bg-amber-500/20 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+        className="min-h-[42px] inline-flex items-center gap-2 rounded-xl border border-amber-500/40 bg-amber-500/15 px-3 sm:px-3.5 py-2 text-xs font-semibold text-amber-700 dark:text-amber-300 hover:bg-amber-500/25 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
       >
-        <Download className="w-3.5 h-3.5" />
-        Install Studio App
+        <Download className="w-4 h-4 shrink-0" />
+        <span className="hidden sm:inline">Install Studio App</span>
+        <span className="sm:hidden">Install</span>
       </button>
     );
   }
@@ -29,42 +31,42 @@ export const PWAInstallButton: React.FC = () => {
         <button
           type="button"
           onClick={() => setShowGuide(true)}
-          className="hidden sm:inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900/80 px-3 py-2 text-xs font-medium text-zinc-200 hover:bg-zinc-800 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+          className="min-h-[42px] inline-flex items-center gap-1.5 rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-2 text-xs font-semibold text-zinc-800 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
         >
-          <Smartphone className="w-3.5 h-3.5 text-amber-400" />
-          Install on iOS
+          <Smartphone className="w-4 h-4 text-amber-500 shrink-0" />
+          <span>Install iOS</span>
         </button>
 
-        {showGuide && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
-            <div className="w-full max-w-sm rounded-2xl border border-zinc-800 bg-zinc-900 p-6 shadow-2xl">
-              <div className="flex items-center justify-between">
-                <h3 className="text-base font-semibold text-zinc-100">
-                  Install on iPhone or iPad
-                </h3>
-                <button
-                  type="button"
-                  onClick={() => setShowGuide(false)}
-                  className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg text-zinc-400 hover:text-zinc-100"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-              <p className="mt-3 text-sm text-zinc-300 leading-relaxed">
-                1. Tap the <strong>Share</strong> button in your Safari toolbar.
-                <br />
-                2. Scroll down and tap <strong>Add to Home Screen</strong> to launch BOBY AI MOVIE MAKER full-screen.
-              </p>
-              <button
-                type="button"
-                onClick={() => setShowGuide(false)}
-                className="mt-5 w-full rounded-lg bg-amber-500 py-2.5 text-xs font-semibold text-zinc-950 hover:bg-amber-400 transition-colors"
-              >
-                Got It
-              </button>
-            </div>
-          </div>
-        )}
+        <StudioModal
+          open={showGuide}
+          onClose={() => setShowGuide(false)}
+          title="Install on iPhone or iPad"
+          subtitle="Full-screen standalone app with offline studio database"
+          icon={<Smartphone className="w-5 h-5 text-amber-500" />}
+          maxWidthClass="max-w-sm"
+          footer={
+            <button
+              type="button"
+              onClick={() => setShowGuide(false)}
+              className="w-full min-h-[44px] rounded-xl bg-amber-500 hover:bg-amber-400 px-4 py-2 text-xs font-semibold text-zinc-950 transition-colors cursor-pointer"
+            >
+              Got It
+            </button>
+          }
+        >
+          <ol className="space-y-2.5 text-sm text-zinc-700 dark:text-zinc-300 leading-relaxed list-decimal list-inside">
+            <li>
+              Tap the <strong className="text-zinc-950 dark:text-zinc-100">Share</strong> button in your Safari toolbar.
+            </li>
+            <li>
+              Scroll down and tap{' '}
+              <strong className="text-zinc-950 dark:text-zinc-100">Add to Home Screen</strong>.
+            </li>
+            <li>
+              Launch <strong className="text-zinc-950 dark:text-zinc-100">BobyStudio</strong> directly from your home screen—your shows and checkpoints stay saved offline and auto-sync when online.
+            </li>
+          </ol>
+        </StudioModal>
       </>
     );
   }
@@ -72,14 +74,57 @@ export const PWAInstallButton: React.FC = () => {
   return null;
 };
 
-export const OfflineIndicator: React.FC = () => {
+interface OfflineIndicatorProps {
+  pendingSyncCount?: number;
+  isSyncing?: boolean;
+  onSyncNow?: () => void;
+}
+
+export const OfflineIndicator: React.FC<OfflineIndicatorProps> = ({
+  pendingSyncCount = 0,
+  isSyncing = false,
+  onSyncNow,
+}) => {
   const isOnline = useOnlineStatus();
-  if (isOnline) return null;
+
+  if (isOnline && !isSyncing && pendingSyncCount === 0) {
+    return null;
+  }
 
   return (
-    <div className="fixed bottom-20 lg:bottom-5 left-4 z-50 flex items-center gap-2 rounded-lg border border-amber-500/40 bg-zinc-900/95 backdrop-blur-md px-3.5 py-2 text-xs font-medium text-amber-300 shadow-xl">
-      <WifiOff className="w-4 h-4 text-amber-400 shrink-0" />
-      <span>Offline Mode · Local studio vault & checkpoints active</span>
+    <div className="fixed bottom-[4.5rem] lg:bottom-5 left-4 z-40 flex items-center gap-2.5 rounded-xl border border-amber-500/40 bg-white/95 dark:bg-zinc-900/95 backdrop-blur-md px-3.5 py-2.5 text-xs font-medium text-amber-800 dark:text-amber-300 shadow-xl max-w-[calc(100vw-2rem)]">
+      {!isOnline ? (
+        <>
+          <WifiOff className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+          <span className="truncate">
+            Offline Mode · Saving locally
+            {pendingSyncCount > 0 ? ` (${pendingSyncCount} queued for cloud sync)` : ''}
+          </span>
+        </>
+      ) : isSyncing ? (
+        <>
+          <RefreshCw className="w-4 h-4 text-emerald-600 dark:text-emerald-400 animate-spin shrink-0" />
+          <span className="text-emerald-700 dark:text-emerald-300 truncate">
+            Syncing offline changes to Firebase Cloud...
+          </span>
+        </>
+      ) : (
+        <>
+          <CloudUpload className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+          <span className="truncate">
+            {pendingSyncCount} offline change{pendingSyncCount === 1 ? '' : 's'} ready to sync
+          </span>
+          {onSyncNow && (
+            <button
+              type="button"
+              onClick={onSyncNow}
+              className="ml-1 rounded-lg bg-amber-500 hover:bg-amber-400 px-2.5 py-1 text-[11px] font-semibold text-zinc-950 whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              Sync Now
+            </button>
+          )}
+        </>
+      )}
     </div>
   );
 };

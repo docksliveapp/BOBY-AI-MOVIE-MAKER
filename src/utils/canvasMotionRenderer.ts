@@ -134,12 +134,12 @@ export async function renderKeyframeMotionClip(params: {
         ctx.fillStyle = '#fafafa';
         ctx.textAlign = 'center';
         ctx.font = `700 ${Math.round(width * 0.042)}px Outfit, sans-serif`;
-        ctx.fillText(params.overlayTitle, width / 2, height * 0.82);
+        ctx.fillText(params.overlayTitle, width / 2, height * 0.82, width * 0.88);
 
         if (params.overlaySubtitle) {
           ctx.fillStyle = '#fbbf24';
-          ctx.font = `500 ${Math.round(width * 0.02)}px "Plus Jakarta Sans", sans-serif`;
-          ctx.fillText(params.overlaySubtitle, width / 2, height * 0.88);
+          ctx.font = `500 ${Math.round(width * 0.022)}px "Plus Jakarta Sans", sans-serif`;
+          ctx.fillText(params.overlaySubtitle, width / 2, height * 0.88, width * 0.88);
         }
       }
 
@@ -147,6 +147,7 @@ export async function renderKeyframeMotionClip(params: {
         requestAnimationFrame(drawFrame);
       } else {
         recorder.stop();
+        stream.getTracks().forEach((t) => t.stop());
         resolve();
       }
     };
@@ -228,13 +229,14 @@ export async function renderScrollingEndCreditsClip(params: {
           ctx.fillStyle = '#e4e4e7';
           ctx.font = `500 ${Math.round(lineHeight * 0.54)}px "Plus Jakarta Sans", sans-serif`;
         }
-        ctx.fillText(line, width / 2, y);
+        ctx.fillText(line, width / 2, y, width * 0.88);
       });
 
       if (elapsed < durationMs) {
         requestAnimationFrame(drawFrame);
       } else {
         recorder.stop();
+        stream.getTracks().forEach((t) => t.stop());
         resolve();
       }
     };

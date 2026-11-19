@@ -9,6 +9,10 @@ import {
 } from 'firebase/auth';
 import {
   getFirestore,
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+  onSnapshotsInSync,
   doc,
   getDocFromServer,
   setDoc,
@@ -20,6 +24,7 @@ import {
   onSnapshot,
   serverTimestamp,
   Timestamp,
+  Firestore,
 } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 import type {
@@ -31,14 +36,35 @@ import type {
 } from './types';
 
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+
+// Enable native IndexedDB persistent offline database cache with multi-tab sync
+function initOfflineCapableFirestore(): Firestore {
+  try {
+    return initializeFirestore(
+      app,
+      {
+        localCache: persistentLocalCache({
+          tabManager: persistentMultipleTabManager(),
+        }),
+      },
+      firebaseConfig.firestoreDatabaseId
+    );
+  } catch {
+    return getFirestore(app, firebaseConfig.firestoreDatabaseId);
+  }
+}
+
+export const db = initOfflineCapableFirestore();
 export const auth = getAuth(app);
 
 const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
 
-// Mandatory startup connection verification
+// Mandatory startup connection verification (respects offline mode cleanly)
 async function testConnection(): Promise<void> {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    return;
+  }
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
   } catch (error) {
@@ -48,6 +74,12 @@ async function testConnection(): Promise<void> {
   }
 }
 void testConnection();
+
+export function subscribeFirestoreSyncEvent(onInSync: () => void): () => void {
+  return onSnapshotsInSync(db, () => {
+    onInSync();
+  });
+}
 
 export enum OperationType {
   CREATE = 'create',
@@ -367,7 +399,8 @@ export function subscribeShowCharacters(
   const path = `shows/${showId}/characters`;
   const q = query(
     collection(db, 'shows', showId, 'characters'),
-    where('ownerId', '==', uid)
+    where('ownerId', '==', uid),
+    where('showId', '==', showId)
   );
   return onSnapshot(
     q,

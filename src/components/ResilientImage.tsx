@@ -20,6 +20,7 @@ export const ResilientImage: React.FC<ResilientImageProps> = ({
 
   useEffect(() => {
     let active = true;
+    let createdObjectUrl: string | null = null;
     setFailed(false);
 
     if (!assetIdOrUrl) {
@@ -28,8 +29,15 @@ export const ResilientImage: React.FC<ResilientImageProps> = ({
     }
 
     getImageUrlFromVault(assetIdOrUrl)
-      .then((url) => {
-        if (active) setResolvedSrc(url);
+      .then(({ url, isObjectUrl }) => {
+        if (!active) {
+          if (isObjectUrl && url) URL.revokeObjectURL(url);
+          return;
+        }
+        if (isObjectUrl && url) {
+          createdObjectUrl = url;
+        }
+        setResolvedSrc(url);
       })
       .catch(() => {
         if (active) setFailed(true);
@@ -37,17 +45,20 @@ export const ResilientImage: React.FC<ResilientImageProps> = ({
 
     return () => {
       active = false;
+      if (createdObjectUrl) {
+        URL.revokeObjectURL(createdObjectUrl);
+      }
     };
   }, [assetIdOrUrl]);
 
   if (!resolvedSrc || failed) {
     return (
       <div
-        className={`flex flex-col items-center justify-center bg-gradient-to-br from-zinc-900 via-zinc-950 to-zinc-900 text-zinc-400 p-4 text-center ${className}`}
+        className={`flex flex-col items-center justify-center bg-gradient-to-br from-zinc-100 via-zinc-200/80 to-zinc-100 dark:from-zinc-900 dark:via-zinc-950 dark:to-zinc-900 text-zinc-500 dark:text-zinc-400 p-4 text-center ${className}`}
       >
-        <Clapperboard className="w-7 h-7 text-amber-500/80 mb-2 shrink-0" />
+        <Clapperboard className="w-7 h-7 text-amber-600 dark:text-amber-500/80 mb-2 shrink-0" />
         {fallbackLabel && (
-          <span className="text-xs font-medium text-zinc-300 line-clamp-2 max-w-[18ch]">
+          <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300 line-clamp-2 max-w-[20ch]">
             {fallbackLabel}
           </span>
         )}

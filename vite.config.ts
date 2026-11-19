@@ -24,14 +24,34 @@ export default defineConfig(() => {
           name: 'BOBY AI MOVIE MAKER',
           short_name: 'BobyStudio',
           description:
-            'Zero-friction prompt-driven AI movie, web series, cartoon, and social video studio with universal ZIP export.',
+            'Zero-friction prompt-driven AI movie, web series, cartoon, and social video studio with offline database sync and universal ZIP export.',
+          lang: 'en',
+          dir: 'ltr',
           theme_color: '#09090b',
           background_color: '#09090b',
           display: 'standalone',
+          display_override: ['window-controls-overlay', 'standalone', 'minimal-ui'],
           orientation: 'any',
           start_url: '/',
           scope: '/',
+          prefer_related_applications: false,
           categories: ['entertainment', 'photo', 'video', 'productivity'],
+          shortcuts: [
+            {
+              name: '3-Step AI Studio',
+              short_name: 'Studio',
+              description: 'Create titles, lock faces, and launch a new AI movie production',
+              url: '/?tab=studio',
+              icons: [{ src: '/pwa-192x192.png', sizes: '192x192', type: 'image/png' }],
+            },
+            {
+              name: 'Ready ZIP Downloads',
+              short_name: 'Downloads',
+              description: 'Download completed NLE-ready movie ZIP bundles',
+              url: '/?tab=downloads',
+              icons: [{ src: '/pwa-192x192.png', sizes: '192x192', type: 'image/png' }],
+            },
+          ],
           icons: [
             {
               src: '/pwa-192x192.png',
@@ -54,8 +74,11 @@ export default defineConfig(() => {
           ],
         },
         workbox: {
-          globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
-          maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
+          globPatterns: ['**/*.{js,css,html,ico,png,jpg,jpeg,webp,svg,woff,woff2}'],
+          maximumFileSizeToCacheInBytes: 8 * 1024 * 1024,
+          cleanupOutdatedCaches: true,
+          clientsClaim: true,
+          skipWaiting: true,
           navigateFallbackDenylist: [/^\/api\//],
           runtimeCaching: [
             {
@@ -64,7 +87,7 @@ export default defineConfig(() => {
               options: {
                 cacheName: 'google-fonts-cache',
                 expiration: {
-                  maxEntries: 10,
+                  maxEntries: 12,
                   maxAgeSeconds: 60 * 60 * 24 * 365,
                 },
                 cacheableResponse: {
@@ -78,8 +101,22 @@ export default defineConfig(() => {
               options: {
                 cacheName: 'gstatic-fonts-cache',
                 expiration: {
-                  maxEntries: 10,
+                  maxEntries: 12,
                   maxAgeSeconds: 60 * 60 * 24 * 365,
+                },
+                cacheableResponse: {
+                  statuses: [0, 200],
+                },
+              },
+            },
+            {
+              urlPattern: /\/src\/assets\/images\/.*\.(?:png|jpg|jpeg|webp|svg)$/i,
+              handler: 'CacheFirst',
+              options: {
+                cacheName: 'studio-showcase-assets',
+                expiration: {
+                  maxEntries: 40,
+                  maxAgeSeconds: 60 * 60 * 24 * 90,
                 },
                 cacheableResponse: {
                   statuses: [0, 200],

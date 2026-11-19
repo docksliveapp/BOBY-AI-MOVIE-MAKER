@@ -3,15 +3,36 @@
   "appName": "BOBY AI MOVIE MAKER",
   "webDir": "dist",
   "bundledWebRuntime": false,
+  "backgroundColor": "#09090b",
   "server": {
     "androidScheme": "https",
-    "iosScheme": "capacitor"
+    "iosScheme": "capacitor",
+    "cleartext": false
+  },
+  "android": {
+    "allowMixedContent": false,
+    "captureInput": true,
+    "webContentsDebuggingEnabled": false
+  },
+  "ios": {
+    "contentInset": "automatic",
+    "allowsLinkPreview": false,
+    "scrollEnabled": true
   },
   "plugins": {
     "SplashScreen": {
       "launchShowDuration": 1200,
       "backgroundColor": "#09090b",
-      "showSpinner": false
+      "showSpinner": false,
+      "androidScaleType": "CENTER_CROP"
+    },
+    "StatusBar": {
+      "style": "DARK",
+      "backgroundColor": "#09090b"
+    },
+    "Keyboard": {
+      "resize": "body",
+      "style": "DARK"
     }
   }
 }

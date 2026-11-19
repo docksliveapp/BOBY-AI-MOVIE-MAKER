@@ -1,16 +1,20 @@
 import React, { useState } from 'react';
-import { Clapperboard, Film, Play, ShieldCheck, Sparkles, Wand2 } from 'lucide-react';
+import { Clapperboard, Film, Moon, Play, ShieldCheck, Sparkles, Sun, Wand2 } from 'lucide-react';
 import { ResilientImage } from './ResilientImage';
 import { PWAInstallButton } from './PWAWidgets';
 
 const HERO_STUDIO_IMAGE = '/src/assets/images/studio_hero_backdrop_1795041189982.jpg';
 
 interface WelcomeAuthScreenProps {
+  theme: 'dark' | 'light';
+  onToggleTheme: () => void;
   onGoogleLogin: () => Promise<void>;
   onDemoMode: () => void;
 }
 
 export const WelcomeAuthScreen: React.FC<WelcomeAuthScreenProps> = ({
+  theme,
+  onToggleTheme,
   onGoogleLogin,
   onDemoMode,
 }) => {
@@ -35,36 +39,44 @@ export const WelcomeAuthScreen: React.FC<WelcomeAuthScreenProps> = ({
   };
 
   return (
-    <div className="min-h-screen bg-[#09090b] text-zinc-100 flex flex-col">
+    <div className="min-h-screen bg-zinc-50 dark:bg-[#09090b] text-zinc-900 dark:text-zinc-100 flex flex-col transition-colors duration-200">
       {/* Clean 3-Zone Top Bar */}
-      <header className="flex items-center justify-between gap-8 px-6 py-4 border-b border-zinc-800/80 bg-[#09090b]/90 backdrop-blur-xl">
+      <header className="sticky top-0 z-30 flex items-center justify-between gap-4 sm:gap-8 px-4 sm:px-6 h-16 border-b border-zinc-200 dark:border-zinc-800/80 bg-white/90 dark:bg-[#09090b]/90 backdrop-blur-xl pt-safe">
         <div className="flex items-center gap-3 shrink-0">
           <div className="w-9 h-9 rounded-xl bg-amber-500 flex items-center justify-center text-zinc-950 shadow-sm">
             <Clapperboard className="w-5 h-5" />
           </div>
-          <span className="font-display text-lg font-bold tracking-tight text-zinc-100 whitespace-nowrap">
+          <span className="font-display text-base sm:text-lg font-bold tracking-tight text-zinc-950 dark:text-zinc-100 whitespace-nowrap">
             BOBY AI MOVIE MAKER
           </span>
         </div>
 
-        <nav className="hidden md:flex items-center gap-7 text-sm font-medium text-zinc-400">
-          <a href="#workflow" className="hover:text-zinc-100 transition-colors whitespace-nowrap">
+        <nav className="hidden md:flex items-center gap-7 text-sm font-medium text-zinc-600 dark:text-zinc-400">
+          <a href="#workflow" className="hover:text-zinc-950 dark:hover:text-zinc-100 transition-colors whitespace-nowrap">
             3-Step Flow
           </a>
-          <a href="#formats" className="hover:text-zinc-100 transition-colors whitespace-nowrap">
-            Formats & 8K
+          <a href="#formats" className="hover:text-zinc-950 dark:hover:text-zinc-100 transition-colors whitespace-nowrap">
+            Formats &amp; 8K
           </a>
-          <a href="#editors" className="hover:text-zinc-100 transition-colors whitespace-nowrap">
+          <a href="#editors" className="hover:text-zinc-950 dark:hover:text-zinc-100 transition-colors whitespace-nowrap">
             Universal ZIP
           </a>
         </nav>
 
-        <div className="flex items-center gap-3 shrink-0">
+        <div className="flex items-center gap-2 sm:gap-3 shrink-0">
           <PWAInstallButton />
           <button
             type="button"
+            onClick={onToggleTheme}
+            aria-label={theme === 'dark' ? 'Switch to Daylight theme' : 'Switch to Dark Studio theme'}
+            className="min-h-[42px] min-w-[42px] flex items-center justify-center rounded-xl border border-zinc-300 dark:border-zinc-800 bg-zinc-100 dark:bg-zinc-900 hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 transition-colors cursor-pointer shrink-0"
+          >
+            {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+          </button>
+          <button
+            type="button"
             onClick={onDemoMode}
-            className="px-4 py-2 rounded-lg border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-xs font-semibold text-zinc-200 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            className="min-h-[42px] px-4 py-2 rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-xs font-semibold text-zinc-800 dark:text-zinc-200 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
           >
             Instant Demo
           </button>
@@ -72,32 +84,32 @@ export const WelcomeAuthScreen: React.FC<WelcomeAuthScreenProps> = ({
       </header>
 
       {/* Main Split Studio Stage */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-6 py-10 lg:py-14 flex flex-col justify-center">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 items-stretch">
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-8 sm:py-12 lg:py-14 flex flex-col justify-center">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-10 items-stretch">
           {/* Left Sign-In & Studio Value Column */}
           <div className="lg:col-span-6 flex flex-col justify-center space-y-6">
-            <div className="text-xs font-medium text-amber-400 tracking-wide">
+            <div className="text-xs font-semibold text-amber-700 dark:text-amber-400 tracking-wide">
               Prompt-Driven Cinema · Web Series · 3D Cartoons · Reels
             </div>
 
             <h1
-              className="font-display text-3xl sm:text-5xl font-bold text-zinc-50 leading-[1.12]"
+              className="font-display text-3xl sm:text-5xl font-bold text-zinc-950 dark:text-zinc-50 leading-[1.12]"
               style={{ textWrap: 'balance' }}
             >
               Turn Any Written or Spoken Story Into a Ready-to-Edit Movie Pack.
             </h1>
 
-            <p className="text-base text-zinc-300 leading-relaxed max-w-xl">
-              Generate viral titles, lock 100% consistent character faces across scenes, synthesize multi-language voiceovers in Urdu, English, Arabic, and Hindi, and export a numbered ZIP ready for Premiere Pro, DaVinci Resolve, CapCut, and Filmora.
+            <p className="text-base text-zinc-600 dark:text-zinc-300 leading-relaxed max-w-xl">
+              Generate viral titles, lock 100% consistent character faces across scenes, synthesize multi-language voiceovers &amp; SRT captions in Urdu, English, Arabic, and Hindi, and export a numbered ZIP ready for Premiere Pro, DaVinci Resolve, CapCut, and Filmora.
             </p>
 
             {/* Auth Card */}
-            <div className="rounded-2xl border border-zinc-800/90 bg-zinc-900/65 backdrop-blur-xl p-6 space-y-4 max-w-lg">
+            <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800/90 bg-white dark:bg-zinc-900/70 backdrop-blur-xl p-6 space-y-4 max-w-lg shadow-sm dark:shadow-none">
               <button
                 type="button"
                 onClick={handleGoogleClick}
                 disabled={loading}
-                className="w-full min-h-[48px] flex items-center justify-center gap-3 rounded-xl bg-white hover:bg-zinc-100 text-zinc-950 font-semibold text-sm px-5 py-3 transition-colors shadow-sm disabled:opacity-60 cursor-pointer"
+                className="w-full min-h-[48px] flex items-center justify-center gap-3 rounded-xl bg-zinc-950 dark:bg-white hover:bg-zinc-800 dark:hover:bg-zinc-100 text-white dark:text-zinc-950 font-semibold text-sm px-5 py-3 active:scale-[0.99] transition-all shadow-sm disabled:opacity-60 cursor-pointer"
               >
                 <svg className="w-5 h-5 shrink-0" viewBox="0 0 48 48">
                   <path
@@ -123,47 +135,47 @@ export const WelcomeAuthScreen: React.FC<WelcomeAuthScreenProps> = ({
               </button>
 
               <div className="flex items-center gap-3 text-xs text-zinc-500">
-                <div className="h-px flex-1 bg-zinc-800" />
+                <div className="h-px flex-1 bg-zinc-200 dark:bg-zinc-800" />
                 <span>or instant preview</span>
-                <div className="h-px flex-1 bg-zinc-800" />
+                <div className="h-px flex-1 bg-zinc-200 dark:bg-zinc-800" />
               </div>
 
               <button
                 type="button"
                 onClick={onDemoMode}
-                className="w-full min-h-[46px] flex items-center justify-center gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 font-semibold text-sm px-5 py-2.5 transition-colors cursor-pointer"
+                className="w-full min-h-[46px] flex items-center justify-center gap-2 rounded-xl border border-amber-500/50 bg-amber-500/15 hover:bg-amber-500/25 text-amber-800 dark:text-amber-300 font-semibold text-sm px-5 py-2.5 active:scale-[0.99] transition-all cursor-pointer"
               >
                 <Play className="w-4 h-4 fill-current" />
                 <span className="whitespace-nowrap">1-Click Demo Studio Bypass</span>
               </button>
 
               {errorMsg && (
-                <p className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2">
+                <p className="text-xs text-amber-800 dark:text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-xl px-3.5 py-2.5">
                   {errorMsg}
                 </p>
               )}
 
-              <div className="pt-1 flex items-center gap-2 text-xs text-zinc-400">
-                <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+              <div className="pt-1 flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400">
+                <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
                 <span>
-                  Cloud sync powered by Firebase · Works offline via PWA & IndexedDB checkpoints
+                  Offline-first IndexedDB database · Auto-syncs to Firebase Cloud on reconnect
                 </span>
               </div>
             </div>
           </div>
 
           {/* Right Cinema Showcase Visual */}
-          <div className="lg:col-span-6 relative rounded-2xl overflow-hidden border border-zinc-800/80 min-h-[340px] lg:min-h-[480px]">
+          <div className="lg:col-span-6 relative rounded-2xl overflow-hidden border border-zinc-200 dark:border-zinc-800/80 min-h-[340px] lg:min-h-[480px] shadow-sm dark:shadow-none">
             <ResilientImage
               assetIdOrUrl={HERO_STUDIO_IMAGE}
               alt="BOBY AI MOVIE MAKER cinema production stage"
               className="w-full h-full object-cover"
               fallbackLabel="BOBY AI MOVIE MAKER Soundstage"
             />
-            <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/35 to-transparent flex flex-col justify-end p-6 sm:p-8">
+            <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent flex flex-col justify-end p-6 sm:p-8">
               <div className="space-y-2">
                 <div className="text-xs text-amber-300 font-medium">
-                  Asaan 3-Step Automation · Premiere, DaVinci, CapCut & Filmora Ready
+                  Asaan 3-Step Automation · Premiere, DaVinci, CapCut &amp; Filmora Ready
                 </div>
                 <p className="text-lg sm:text-xl font-display font-semibold text-white">
                   16:9 Cinema · 9:16 Reels · 24/30/60 FPS · Up to 8K Master Settings
@@ -179,35 +191,35 @@ export const WelcomeAuthScreen: React.FC<WelcomeAuthScreenProps> = ({
         {/* Full-Width 3-Step Capability Strip Below Hero */}
         <section
           id="workflow"
-          className="mt-12 pt-8 border-t border-zinc-800/80 grid grid-cols-1 md:grid-cols-3 gap-6"
+          className="mt-12 pt-8 border-t border-zinc-200 dark:border-zinc-800/80 grid grid-cols-1 md:grid-cols-3 gap-6"
         >
           <div className="space-y-2">
-            <div className="flex items-center gap-2 text-amber-400 text-sm font-semibold">
+            <div className="flex items-center gap-2 text-amber-700 dark:text-amber-400 text-sm font-semibold">
               <Wand2 className="w-4 h-4" />
-              <span>01. Viral Title & 1280×720 Thumbnail</span>
+              <span>01. Viral Title &amp; 1280×720 Thumbnail</span>
             </div>
-            <p className="text-sm text-zinc-400 leading-relaxed">
+            <p className="text-sm text-zinc-600 dark:text-zinc-400 leading-relaxed">
               Type a 1-line idea and let Gemini craft high-CTR titles plus a widescreen YouTube or Social cover thumbnail automatically.
             </p>
           </div>
 
           <div className="space-y-2" id="formats">
-            <div className="flex items-center gap-2 text-violet-400 text-sm font-semibold">
+            <div className="flex items-center gap-2 text-violet-700 dark:text-violet-400 text-sm font-semibold">
               <Sparkles className="w-4 h-4" />
               <span>02. Prompt-Driven Character Face Lock</span>
             </div>
-            <p className="text-sm text-zinc-400 leading-relaxed">
-              Generate 4 distinct character portraits for heroes, parents, friends, or villains—then lock your favorite face for 100% scene identity.
+            <p className="text-sm text-zinc-600 dark:text-zinc-400 leading-relaxed">
+              Generate 4 distinct portraits, audition AI voices live, and lock your favorite face for 100% scene-to-scene identity.
             </p>
           </div>
 
           <div className="space-y-2" id="editors">
-            <div className="flex items-center gap-2 text-emerald-400 text-sm font-semibold">
+            <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-400 text-sm font-semibold">
               <Film className="w-4 h-4" />
               <span>03. Voice-Dictated Story to Universal ZIP</span>
             </div>
-            <p className="text-sm text-zinc-400 leading-relaxed">
-              Speak or type your plot. Our fail-safe queue renders numbered scenes, multi-language voiceovers, BGM, intro, credits, and a clean ZIP archive.
+            <p className="text-sm text-zinc-600 dark:text-zinc-400 leading-relaxed">
+              Speak or polish your plot with the AI Script Doctor. Export numbered clips, multi-language audio, SRT subtitles, EDL markers, and BGM in one ZIP.
             </p>
           </div>
         </section>

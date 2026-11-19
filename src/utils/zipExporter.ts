@@ -4,24 +4,112 @@ import type {
   PipelineCheckpoint,
   ShowProfile,
 } from '../types';
+import { getAssetFromVault, isSafeMediaUrl } from '../services/mediaVault';
 
 function stripDataUrlPrefix(input: string): string {
   const commaIndex = input.indexOf(',');
   return commaIndex >= 0 ? input.slice(commaIndex + 1) : input;
 }
 
-async function resolveImageToBase64(urlOrData: string): Promise<string> {
-  if (urlOrData.startsWith('data:')) {
-    return stripDataUrlPrefix(urlOrData);
-  }
-  const resp = await fetch(urlOrData);
-  const blob = await resp.blob();
+function blobToBase64Str(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onloadend = () => resolve(stripDataUrlPrefix(String(reader.result || '')));
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(blob);
   });
+}
+
+async function resolveImageToBase64(urlOrAssetId: string): Promise<string> {
+  if (!urlOrAssetId) return '';
+  if (urlOrAssetId.startsWith('data:')) {
+    return stripDataUrlPrefix(urlOrAssetId);
+  }
+  // Check IndexedDB MediaVault first for stored generated thumbnails
+  if (!urlOrAssetId.startsWith('/') && !urlOrAssetId.startsWith('https://')) {
+    const vaultVal = await getAssetFromVault(urlOrAssetId);
+    if (!vaultVal) return '';
+    if (typeof vaultVal === 'string') {
+      return vaultVal.startsWith('data:') ? stripDataUrlPrefix(vaultVal) : '';
+    }
+    return blobToBase64Str(vaultVal);
+  }
+
+  if (!isSafeMediaUrl(urlOrAssetId)) return '';
+  const resp = await fetch(urlOrAssetId);
+  if (!resp.ok) return '';
+  const blob = await resp.blob();
+  return blobToBase64Str(blob);
+}
+
+function formatSrtTime(totalSeconds: number): string {
+  const hrs = Math.floor(totalSeconds / 3600);
+  const mins = Math.floor((totalSeconds % 3600) / 60);
+  const secs = Math.floor(totalSeconds % 60);
+  const ms = Math.round((totalSeconds - Math.floor(totalSeconds)) * 1000);
+  return `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(
+    2,
+    '0'
+  )},${String(ms).padStart(3, '0')}`;
+}
+
+function buildSrtForLanguage(
+  checkpoint: PipelineCheckpoint,
+  language: string,
+  hasIntro: boolean
+): string {
+  const scenes = checkpoint.plan?.scenes || [];
+  let cursorSec = hasIntro ? 4 : 0;
+  const blocks: string[] = [];
+
+  scenes.forEach((sc, idx) => {
+    const start = cursorSec;
+    const end = cursorSec + 5;
+    cursorSec = end;
+    const line =
+      sc.dialogues.find((d) => d.language.toLowerCase() === language.toLowerCase())?.line ||
+      sc.dialogues[0]?.line ||
+      sc.heading;
+
+    blocks.push(
+      `${idx + 1}\n${formatSrtTime(start)} --> ${formatSrtTime(end)}\n${sc.speakerName}: ${line}\n`
+    );
+  });
+
+  return blocks.join('\n');
+}
+
+function buildNleMarkersCsv(show: ShowProfile, checkpoint: PipelineCheckpoint): string {
+  const rows: string[] = [
+    'Marker Name,Description,In Time,Out Time,Track,File Reference',
+  ];
+  let cursor = 0;
+
+  const esc = (s: string) => `"${String(s || '').replace(/"/g, '""')}"`;
+
+  if (show.includeIntro && checkpoint.introVideoBase64) {
+    rows.push(
+      `${esc('Studio Intro')},${esc(show.title)},${formatSrtTime(cursor).replace(',', '.')},${formatSrtTime(cursor + 4).replace(',', '.')},V1,intro_sequence.mp4`
+    );
+    cursor += 4;
+  }
+
+  for (let idx = 0; idx < (checkpoint.plan?.scenes || []).length; idx++) {
+    const sc = checkpoint.plan!.scenes[idx];
+    const code = `scene_${String(idx + 1).padStart(2, '0')}`;
+    rows.push(
+      `${esc(sc.heading)},${esc(sc.motionPrompt)},${formatSrtTime(cursor).replace(',', '.')},${formatSrtTime(cursor + 5).replace(',', '.')},V1,video_clips/${code}.mp4`
+    );
+    cursor += 5;
+  }
+
+  if (show.includeEndCredits && checkpoint.endCreditsVideoBase64) {
+    rows.push(
+      `${esc('End Credits')},${esc('Scrolling Theatrical Credits')},${formatSrtTime(cursor).replace(',', '.')},${formatSrtTime(cursor + 4.5).replace(',', '.')},V1,end_credits.mp4`
+    );
+  }
+
+  return rows.join('\n');
 }
 
 function buildProductionScriptTxt(
@@ -33,7 +121,7 @@ function buildProductionScriptTxt(
   const lines: string[] = [];
 
   lines.push('====================================================================');
-  lines.push(`BOBY AI MOVIE MAKER — UNIVERSAL PRODUCTION PACKAGE`);
+  lines.push('BOBY AI MOVIE MAKER — UNIVERSAL PRODUCTION PACKAGE');
   lines.push('====================================================================');
   lines.push(`Production Title : ${show.title}`);
   lines.push(`Episode Title    : ${plan?.episodeTitle || 'Episode 01'}`);
@@ -49,6 +137,7 @@ function buildProductionScriptTxt(
   lines.push('3. Place end_credits.mp4 at the end of Video Track V1 (and trailer.mp4 for social promotion).');
   lines.push('4. Drag your preferred language voiceover folder (e.g., audio_urdu/ or audio_english/) onto Dialogue Track A1.');
   lines.push('5. Drag background_music/scene_01_bgm.mp3.. onto Music Track A2 at -16 dB.');
+  lines.push('6. Drop subtitles_<lang>/episode_<lang>.srt directly onto your Captions Track for instant multi-language subtitles.');
   lines.push('');
 
   lines.push('--------------------------------------------------------------------');
@@ -94,7 +183,9 @@ function buildProductionScriptTxt(
  * - video_clips/scene_01.mp4, scene_02.mp4...
  * - end_credits.mp4
  * - audio_<lang>/scene_01_<lang>.mp3...
+ * - subtitles_<lang>/episode_<lang>.srt
  * - background_music/scene_01_bgm.mp3...
+ * - edl_timeline_markers.csv
  * - production_script.txt
  */
 export async function buildUniversalProductionZip(params: {
@@ -159,12 +250,29 @@ export async function buildUniversalProductionZip(params: {
     }
   }
 
-  // 5. Optional Scrolling End Credits (end_credits.mp4)
+  // 5. Multi-Language Synchronized Subtitles (.srt) for Premiere Pro, CapCut, DaVinci & Filmora
+  if (plannedScenes.length > 0) {
+    for (const lang of show.languages) {
+      const langSlug = lang.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+      const srtContent = buildSrtForLanguage(
+        checkpoint,
+        lang,
+        Boolean(show.includeIntro && checkpoint.introVideoBase64)
+      );
+      if (srtContent.trim()) {
+        const subFolder = zip.folder(`subtitles_${langSlug}`);
+        subFolder?.file(`episode_${langSlug}.srt`, srtContent);
+      }
+    }
+  }
+
+  // 6. Optional Scrolling End Credits (end_credits.mp4)
   if (show.includeEndCredits && checkpoint.endCreditsVideoBase64) {
     zip.file('end_credits.mp4', checkpoint.endCreditsVideoBase64, { base64: true });
   }
 
-  // 6. Full Production Script & NLE Timeline Guide (production_script.txt)
+  // 7. NLE Timeline Markers CSV & Full Production Script
+  zip.file('edl_timeline_markers.csv', buildNleMarkersCsv(show, checkpoint));
   zip.file('production_script.txt', buildProductionScriptTxt(show, characters, checkpoint));
 
   return zip.generateAsync({

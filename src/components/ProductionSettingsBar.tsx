@@ -73,15 +73,15 @@ export const ProductionSettingsBar: React.FC<ProductionSettingsBarProps> = ({
   };
 
   return (
-    <section className="rounded-2xl border border-zinc-800/80 bg-zinc-900/65 backdrop-blur-xl p-6 space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 border-b border-zinc-800/80">
+    <section className="rounded-2xl border border-zinc-200 dark:border-zinc-800/80 bg-white dark:bg-zinc-900/65 backdrop-blur-xl p-5 sm:p-6 space-y-6 shadow-xs dark:shadow-none">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 border-b border-zinc-200 dark:border-zinc-800/80">
         <div className="flex items-center gap-2.5">
-          <SlidersHorizontal className="w-4 h-4 text-amber-400" />
-          <h2 className="font-display text-base font-semibold text-zinc-100">
+          <SlidersHorizontal className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+          <h2 className="font-display text-base font-semibold text-zinc-950 dark:text-zinc-100">
             Universal Production & Platform Settings
           </h2>
         </div>
-        <div className="text-xs font-mono tabular-nums text-zinc-400">
+        <div className="text-xs font-mono tabular-nums text-zinc-500 dark:text-zinc-400">
           Active Spec · {show.aspectRatio} · {show.fps} FPS · {show.resolution} ·{' '}
           {show.languages.join(' / ')}
         </div>
@@ -90,8 +90,8 @@ export const ProductionSettingsBar: React.FC<ProductionSettingsBarProps> = ({
       {/* Row 1: Content Mode & Visual Style */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
         <div className="space-y-2">
-          <label className="text-xs font-medium text-zinc-300 flex items-center gap-1.5">
-            <Film className="w-3.5 h-3.5 text-amber-400" />
+          <label className="text-xs font-medium text-zinc-700 dark:text-zinc-300 flex items-center gap-1.5">
+            <Film className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
             Content Mode
           </label>
           <div className="grid grid-cols-2 gap-2">
@@ -102,10 +102,10 @@ export const ProductionSettingsBar: React.FC<ProductionSettingsBarProps> = ({
                   key={m.value}
                   type="button"
                   onClick={() => onUpdateShow({ contentMode: m.value })}
-                  className={`min-h-[42px] px-3 py-2 rounded-xl text-xs font-medium text-left transition-colors cursor-pointer ${
+                  className={`min-h-[44px] px-3 py-2 rounded-xl text-xs font-medium text-left transition-all active:scale-[0.98] cursor-pointer ${
                     active
-                      ? 'bg-amber-500 text-zinc-950 font-semibold'
-                      : 'border border-zinc-800 bg-zinc-950/70 text-zinc-300 hover:border-zinc-700'
+                      ? 'bg-amber-500 text-zinc-950 font-semibold shadow-xs'
+                      : 'border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950/70 text-zinc-700 dark:text-zinc-300 hover:border-zinc-400 dark:hover:border-zinc-700'
                   }`}
                 >
                   {m.label}
@@ -116,14 +116,18 @@ export const ProductionSettingsBar: React.FC<ProductionSettingsBarProps> = ({
         </div>
 
         <div className="space-y-2">
-          <label className="text-xs font-medium text-zinc-300 flex items-center gap-1.5">
-            <Monitor className="w-3.5 h-3.5 text-violet-400" />
+          <label
+            htmlFor="visual-style-select"
+            className="text-xs font-medium text-zinc-700 dark:text-zinc-300 flex items-center gap-1.5"
+          >
+            <Monitor className="w-3.5 h-3.5 text-violet-600 dark:text-violet-400" />
             Visual Filter Style
           </label>
           <select
+            id="visual-style-select"
             value={show.visualStyle}
             onChange={(e) => onUpdateShow({ visualStyle: e.target.value as VisualStyle })}
-            className="w-full min-h-[42px] rounded-xl border border-zinc-800 bg-zinc-950 px-3.5 py-2.5 text-sm text-zinc-100 focus:outline-none focus:border-amber-500"
+            className="w-full min-h-[44px] rounded-xl border border-zinc-300 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 px-3.5 py-2.5 text-sm text-zinc-950 dark:text-zinc-100 focus:outline-none focus:border-amber-500"
           >
             {VISUAL_STYLES.map((st) => (
               <option key={st.value} value={st.value}>
@@ -138,7 +142,7 @@ export const ProductionSettingsBar: React.FC<ProductionSettingsBarProps> = ({
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         {/* Aspect Ratio */}
         <div className="space-y-2">
-          <span className="text-xs font-medium text-zinc-300 block">
+          <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300 block">
             Frame Size / Aspect Ratio
           </span>
           <div className="grid grid-cols-4 gap-1.5">
@@ -149,10 +153,10 @@ export const ProductionSettingsBar: React.FC<ProductionSettingsBarProps> = ({
                   key={ar.value}
                   type="button"
                   onClick={() => onUpdateShow({ aspectRatio: ar.value })}
-                  className={`min-h-[46px] rounded-xl px-2 py-1.5 flex flex-col items-center justify-center transition-colors cursor-pointer ${
+                  className={`min-h-[48px] rounded-xl px-2 py-1.5 flex flex-col items-center justify-center transition-all active:scale-[0.98] cursor-pointer ${
                     active
-                      ? 'bg-amber-500 text-zinc-950 font-semibold'
-                      : 'border border-zinc-800 bg-zinc-950/70 text-zinc-300 hover:border-zinc-700'
+                      ? 'bg-amber-500 text-zinc-950 font-semibold shadow-xs'
+                      : 'border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950/70 text-zinc-700 dark:text-zinc-300 hover:border-zinc-400 dark:hover:border-zinc-700'
                   }`}
                 >
                   <span className="text-xs font-mono tabular-nums">{ar.label}</span>
@@ -171,7 +175,9 @@ export const ProductionSettingsBar: React.FC<ProductionSettingsBarProps> = ({
 
         {/* Frame Rate (FPS) */}
         <div className="space-y-2">
-          <span className="text-xs font-medium text-zinc-300 block">Frame Rate (FPS)</span>
+          <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300 block">
+            Frame Rate (FPS)
+          </span>
           <div className="grid grid-cols-3 gap-2">
             {FPS_OPTIONS.map((fpsVal) => {
               const active = show.fps === fpsVal;
@@ -180,10 +186,10 @@ export const ProductionSettingsBar: React.FC<ProductionSettingsBarProps> = ({
                   key={fpsVal}
                   type="button"
                   onClick={() => onUpdateShow({ fps: fpsVal })}
-                  className={`min-h-[46px] rounded-xl px-3 py-2 text-xs font-mono tabular-nums transition-colors cursor-pointer ${
+                  className={`min-h-[48px] rounded-xl px-3 py-2 text-xs font-mono tabular-nums transition-all active:scale-[0.98] cursor-pointer ${
                     active
-                      ? 'bg-amber-500 text-zinc-950 font-semibold'
-                      : 'border border-zinc-800 bg-zinc-950/70 text-zinc-300 hover:border-zinc-700'
+                      ? 'bg-amber-500 text-zinc-950 font-semibold shadow-xs'
+                      : 'border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950/70 text-zinc-700 dark:text-zinc-300 hover:border-zinc-400 dark:hover:border-zinc-700'
                   }`}
                 >
                   {fpsVal} FPS
@@ -195,7 +201,9 @@ export const ProductionSettingsBar: React.FC<ProductionSettingsBarProps> = ({
 
         {/* Resolution Quality */}
         <div className="space-y-2">
-          <span className="text-xs font-medium text-zinc-300 block">Resolution Quality</span>
+          <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300 block">
+            Resolution Quality
+          </span>
           <div className="grid grid-cols-4 gap-1.5">
             {RESOLUTIONS.map((res) => {
               const active = show.resolution === res.value;
@@ -204,10 +212,10 @@ export const ProductionSettingsBar: React.FC<ProductionSettingsBarProps> = ({
                   key={res.value}
                   type="button"
                   onClick={() => onUpdateShow({ resolution: res.value })}
-                  className={`min-h-[46px] rounded-xl px-2 py-2 text-xs font-mono tabular-nums transition-colors cursor-pointer ${
+                  className={`min-h-[48px] rounded-xl px-2 py-2 text-xs font-mono tabular-nums transition-all active:scale-[0.98] cursor-pointer ${
                     active
-                      ? 'bg-amber-500 text-zinc-950 font-semibold'
-                      : 'border border-zinc-800 bg-zinc-950/70 text-zinc-300 hover:border-zinc-700'
+                      ? 'bg-amber-500 text-zinc-950 font-semibold shadow-xs'
+                      : 'border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950/70 text-zinc-700 dark:text-zinc-300 hover:border-zinc-400 dark:hover:border-zinc-700'
                   }`}
                 >
                   {res.value}
@@ -219,13 +227,13 @@ export const ProductionSettingsBar: React.FC<ProductionSettingsBarProps> = ({
       </div>
 
       {/* Row 3: Multi-Language Voiceover Selector */}
-      <div className="space-y-2.5 pt-2 border-t border-zinc-800/70">
-        <div className="flex items-center justify-between">
-          <span className="text-xs font-medium text-zinc-300 flex items-center gap-1.5">
-            <Globe className="w-3.5 h-3.5 text-emerald-400" />
-            Multi-Language Voiceover Tracks (Generates dedicated audio folder per language in ZIP)
+      <div className="space-y-2.5 pt-3 border-t border-zinc-200 dark:border-zinc-800/70">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+          <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300 flex items-center gap-1.5">
+            <Globe className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+            Multi-Language Voiceover &amp; .SRT Subtitle Tracks (Dedicated folder per language in ZIP)
           </span>
-          <span className="text-xs font-mono tabular-nums text-zinc-400">
+          <span className="text-xs font-mono tabular-nums text-zinc-500 dark:text-zinc-400">
             {show.languages.length} selected
           </span>
         </div>
@@ -238,17 +246,17 @@ export const ProductionSettingsBar: React.FC<ProductionSettingsBarProps> = ({
                 key={lang}
                 type="button"
                 onClick={() => toggleLanguage(lang)}
-                className={`min-h-[38px] inline-flex items-center gap-2 rounded-xl px-3.5 py-1.5 text-xs font-medium transition-colors whitespace-nowrap cursor-pointer ${
+                className={`min-h-[42px] inline-flex items-center gap-2 rounded-xl px-3.5 py-1.5 text-xs font-medium transition-all active:scale-[0.98] whitespace-nowrap cursor-pointer ${
                   checked
-                    ? 'border border-emerald-500/50 bg-emerald-500/15 text-emerald-300 font-semibold'
-                    : 'border border-zinc-800 bg-zinc-950/70 text-zinc-400 hover:text-zinc-200'
+                    ? 'border border-emerald-500/50 bg-emerald-500/15 text-emerald-800 dark:text-emerald-300 font-semibold'
+                    : 'border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950/70 text-zinc-600 dark:text-zinc-400 hover:text-zinc-950 dark:hover:text-zinc-200'
                 }`}
               >
                 <span
                   className={`w-4 h-4 rounded flex items-center justify-center border ${
                     checked
                       ? 'bg-emerald-500 border-emerald-500 text-zinc-950'
-                      : 'border-zinc-700'
+                      : 'border-zinc-400 dark:border-zinc-700'
                   }`}
                 >
                   {checked && <Check className="w-3 h-3 stroke-[3]" />}

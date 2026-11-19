@@ -38,6 +38,11 @@ export async function withAutoRetry<T>(
 }
 
 async function postJson<T>(url: string, body: Record<string, unknown>): Promise<T> {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    throw new Error(
+      'You are currently offline. Your shows and edits are safely saved locally and will auto-sync when online; reconnect to run cloud AI generation.'
+    );
+  }
   const response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -79,6 +84,19 @@ export async function generateCharacterFaces(params: {
 }): Promise<CharacterFaceCandidate[]> {
   const res = await postJson<{ faces: CharacterFaceCandidate[] }>('/api/ai/generate-faces', params);
   return res.faces || [];
+}
+
+export async function enhanceStoryScript(params: {
+  title: string;
+  roughPrompt: string;
+  contentMode: ContentMode;
+  visualStyle: VisualStyle;
+  languages: SupportedLanguage[];
+  characters: CharacterActor[];
+  targetSceneCount: number;
+}): Promise<string> {
+  const res = await postJson<{ enhancedScript: string }>('/api/ai/enhance-script', params);
+  return res.enhancedScript || params.roughPrompt;
 }
 
 export async function planStoryScenes(params: {

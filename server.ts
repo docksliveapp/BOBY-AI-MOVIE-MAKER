@@ -28,26 +28,34 @@ function getAiClient(): GoogleGenAI {
   });
 }
 
+function scrubSensitiveDetails(text: string): string {
+  return text
+    .replace(/AIza[0-9A-Za-z\-_]{20,}/g, '[REDACTED_KEY]')
+    .replace(/sk_[0-9A-Za-z\-_]{16,}/g, '[REDACTED_KEY]')
+    .replace(/Bearer\s+[0-9A-Za-z\-._~+/]+=*/gi, 'Bearer [REDACTED]')
+    .slice(0, 320);
+}
+
 function formatApiError(err: unknown): { status: number; message: string } {
-  const raw = err instanceof Error ? err.message : String(err);
+  const raw = scrubSensitiveDetails(err instanceof Error ? err.message : String(err));
   if (raw.includes('PERMISSION_DENIED') || raw.includes('API_KEY_INVALID') || raw.includes('403')) {
     return {
       status: 403,
       message:
-        'Gemini API permission denied or invalid key. Please check your selected API key in Settings > Secrets.',
+        'Gemini API permission denied or invalid key. Please verify your billing-enabled API key in Settings > Secrets.',
     };
   }
   if (raw.includes('RESOURCE_EXHAUSTED') || raw.includes('429')) {
     return {
       status: 429,
       message:
-        'API quota reached (429). Upgrading to a billing-enabled key in Settings > Secrets increases production render quota.',
+        'API quota reached (429). Please wait a moment or verify your billing-enabled key in Settings > Secrets.',
     };
   }
   if (raw.includes('NOT_FOUND') || raw.includes('404')) {
     return {
       status: 404,
-      message: `Requested AI model endpoint was not found: ${raw}`,
+      message: 'Requested AI model endpoint was unavailable. Please retry shortly.',
     };
   }
   return {
@@ -67,6 +75,27 @@ function normalizeImageAspectRatio(ratio?: string): '1:1' | '3:4' | '4:3' | '9:1
 const VALID_VOICES = ['Puck', 'Charon', 'Kore', 'Fenrir', 'Zephyr'] as const;
 type ValidVoice = (typeof VALID_VOICES)[number];
 
+const ALLOWED_IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/webp']);
+const ALLOWED_MODES = new Set(['cartoon_3d', 'human_movie', 'music_video', 'social_reel']);
+const ALLOWED_STYLES = new Set([
+  'pixar_3d',
+  'hollywood_live',
+  'anime',
+  'hyper_drama',
+  'film_noir',
+  'cyberpunk_neon',
+]);
+const ALLOWED_LANGUAGES = new Set([
+  'Urdu',
+  'English',
+  'Arabic',
+  'Hindi',
+  'Spanish',
+  'Turkish',
+  'French',
+  'Chinese',
+]);
+
 function sanitizeVoiceName(v?: string): ValidVoice {
   if (v && (VALID_VOICES as readonly string[]).includes(v)) {
     return v as ValidVoice;
@@ -74,9 +103,86 @@ function sanitizeVoiceName(v?: string): ValidVoice {
   return 'Kore';
 }
 
+function clampText(input: unknown, maxLen: number, fallback = ''): string {
+  if (typeof input !== 'string') return fallback;
+  return input.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '').trim().slice(0, maxLen);
+}
+
+function sanitizeLanguagesList(input: unknown): string[] {
+  if (!Array.isArray(input)) return ['English'];
+  const filtered = input
+    .filter((l): l is string => typeof l === 'string' && ALLOWED_LANGUAGES.has(l))
+    .slice(0, 8);
+  return filtered.length > 0 ? filtered : ['English'];
+}
+
+function isTrustedGoogleMediaUri(rawUrl: string): boolean {
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol !== 'https:') return false;
+    const host = parsed.hostname.toLowerCase();
+    return host === 'generativelanguage.googleapis.com' || host.endsWith('.googleapis.com');
+  } catch {
+    return false;
+  }
+}
+
+// Sliding-window in-memory rate limiter for /api/ai/* protection against abuse / quota drain
+const aiRateBuckets = new Map<string, number[]>();
+const RATE_WINDOW_MS = 60_000;
+const RATE_MAX_REQUESTS = 60;
+
+function aiRateLimiter(req: Request, res: Response, next: () => void): void {
+  const forwarded = req.headers['x-forwarded-for'];
+  const ip =
+    (typeof forwarded === 'string' ? forwarded.split(',')[0].trim() : req.socket.remoteAddress) ||
+    'unknown';
+  const now = Date.now();
+  const timestamps = (aiRateBuckets.get(ip) || []).filter((t) => now - t < RATE_WINDOW_MS);
+
+  if (timestamps.length >= RATE_MAX_REQUESTS) {
+    const retryAfterSec = Math.max(1, Math.ceil((RATE_WINDOW_MS - (now - timestamps[0])) / 1000));
+    res.setHeader('Retry-After', String(retryAfterSec));
+    res.status(429).json({
+      error: `Too many AI requests. Please wait ${retryAfterSec}s before retrying.`,
+    });
+    return;
+  }
+
+  timestamps.push(now);
+  aiRateBuckets.set(ip, timestamps);
+  if (aiRateBuckets.size > 2000) {
+    for (const [k, vals] of aiRateBuckets.entries()) {
+      if (vals.every((t) => now - t >= RATE_WINDOW_MS)) {
+        aiRateBuckets.delete(k);
+      }
+    }
+  }
+  next();
+}
+
 async function startServer() {
   const app = express();
-  app.use(express.json({ limit: '50mb' }));
+  app.disable('x-powered-by');
+  app.use(express.json({ limit: '15mb' }));
+
+  // Hardened HTTP security headers compatible with Google Auth popups & PWA
+  app.use((req: Request, res: Response, next: () => void) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('X-XSS-Protection', '0');
+    res.setHeader('Permissions-Policy', 'microphone=(self), camera=(), geolocation=(), payment=()');
+    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
+    if (req.secure || req.headers['x-forwarded-proto'] === 'https') {
+      res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    }
+    if (req.path.startsWith('/api/')) {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    }
+    next();
+  });
+
+  app.use('/api/ai/', aiRateLimiter);
 
   app.get('/api/health', (_req: Request, res: Response) => {
     res.json({
@@ -155,6 +261,12 @@ Generate 4 distinct, catchy, high-CTR titles suitable for YouTube, Web Series, C
         return;
       }
 
+      const safePrompt = clampText(prompt, 3000);
+      if (!safePrompt) {
+        res.status(400).json({ error: 'Image prompt cannot be empty.' });
+        return;
+      }
+
       const mappedRatio = normalizeImageAspectRatio(aspectRatio);
       const anamorphicPrefix =
         aspectRatio === '2.39:1'
@@ -168,11 +280,13 @@ Generate 4 distinct, catchy, high-CTR titles suitable for YouTube, Web Series, C
 
       if (Array.isArray(referenceImages)) {
         for (const ref of referenceImages.slice(0, 4)) {
-          if (ref?.data && ref?.mimeType) {
+          const mime = typeof ref?.mimeType === 'string' ? ref.mimeType.toLowerCase() : '';
+          const b64 = typeof ref?.data === 'string' ? ref.data : '';
+          if (ALLOWED_IMAGE_MIMES.has(mime) && b64.length > 0 && b64.length <= 6_000_000) {
             parts.push({
               inlineData: {
-                mimeType: String(ref.mimeType),
-                data: String(ref.data),
+                mimeType: mime,
+                data: b64,
               },
             });
           }
@@ -180,7 +294,7 @@ Generate 4 distinct, catchy, high-CTR titles suitable for YouTube, Web Series, C
       }
 
       parts.push({
-        text: `${anamorphicPrefix}${prompt}`,
+        text: `${anamorphicPrefix}${safePrompt}`,
       });
 
       const modelName = highRes ? 'gemini-nano-banana-2.1' : 'gemini-3.1-flash-lite-image';
@@ -518,6 +632,9 @@ Also provide:
       }
 
       if (videoPart?.uri) {
+        if (!isTrustedGoogleMediaUri(videoPart.uri)) {
+          throw new Error('Blocked untrusted external media URI.');
+        }
         const videoResp = await fetch(videoPart.uri, {
           headers: {
             'x-goog-api-key': process.env.GEMINI_API_KEY || '',
@@ -679,6 +796,63 @@ Also provide:
         base64Data: Buffer.concat(audioChunks).toString('base64'),
         lyrics,
       });
+    } catch (err) {
+      const formatted = formatApiError(err);
+      res.status(formatted.status).json({ error: formatted.message });
+    }
+  });
+
+  // 8. Director's Tool: AI Script Enhancer & Beat Polisher (Expands rough notes into production-ready plot)
+  app.post('/api/ai/enhance-script', async (req: Request, res: Response) => {
+    try {
+      const ai = getAiClient();
+      const {
+        title = 'Untitled Production',
+        roughPrompt = '',
+        contentMode = 'cartoon_3d',
+        visualStyle = 'pixar_3d',
+        languages = ['Urdu', 'English'],
+        characters = [],
+        targetSceneCount = 4,
+      } = req.body || {};
+
+      const cleanPrompt = clampText(roughPrompt, 8000);
+      if (!cleanPrompt) {
+        res.status(400).json({ error: 'Please write or speak a rough story idea first.' });
+        return;
+      }
+
+      const safeMode = ALLOWED_MODES.has(contentMode) ? contentMode : 'cartoon_3d';
+      const safeStyle = ALLOWED_STYLES.has(visualStyle) ? visualStyle : 'pixar_3d';
+      const safeLangs = sanitizeLanguagesList(languages);
+      const clampedScenes = Math.max(2, Math.min(8, Number(targetSceneCount) || 4));
+      const castNames = Array.isArray(characters)
+        ? characters
+            .slice(0, 12)
+            .map((c: Record<string, unknown>) => `${clampText(c.name, 60)} (${clampText(c.relation, 40)})`)
+            .filter(Boolean)
+            .join(', ')
+        : '';
+
+      const promptText = `You are a veteran screenplay doctor and film director.
+Refine and expand the creator's rough story notes into a vivid, emotionally gripping, production-ready script treatment structured cleanly into ${clampedScenes} sequential beats for "${clampText(title, 160)}".
+Format: ${safeMode}
+Visual Style: ${safeStyle}
+Target Languages: ${safeLangs.join(', ')}
+${castNames ? `Locked Cast: ${castNames}` : ''}
+
+Creator's Rough Notes:
+${cleanPrompt}
+
+Write clear, cinematic, ready-to-direct prose (under 1,800 characters) with concrete visual moments, lighting, character actions, and emotional payoff. Do not add markdown code fences or meta commentary—return only the refined story prompt text.`;
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-4-hydrogen',
+        contents: promptText,
+      });
+
+      const enhancedScript = clampText(response.text ?? cleanPrompt, 7800, cleanPrompt);
+      res.json({ enhancedScript });
     } catch (err) {
       const formatted = formatApiError(err);
       res.status(formatted.status).json({ error: formatted.message });

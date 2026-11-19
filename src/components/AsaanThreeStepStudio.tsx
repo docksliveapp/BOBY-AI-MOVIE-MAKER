@@ -1,7 +1,6 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Check,
-  Clapperboard,
   Image as ImageIcon,
   Loader2,
   Lock,
@@ -12,19 +11,23 @@ import {
   Sparkles,
   Trash2,
   UserPlus,
+  Volume2,
   Wand2,
 } from 'lucide-react';
 import type {
   CharacterActor,
   CharacterFaceCandidate,
   ShowProfile,
+  SupportedLanguage,
   TitleSuggestion,
   VoicePersona,
 } from '../types';
 import {
+  enhanceStoryScript,
   generateCharacterFaces,
   generateStudioImage,
   suggestViralTitles,
+  synthesizeSceneVoiceover,
 } from '../services/geminiService';
 import { saveAssetToVault } from '../services/mediaVault';
 import { ProductionSettingsBar } from './ProductionSettingsBar';
@@ -66,27 +69,41 @@ const VOICE_PERSONAS: Array<{ value: VoicePersona; label: string }> = [
   { value: 'Zephyr', label: 'Zephyr · Gentle Narrator / Soft' },
 ];
 
+const VOICE_AUDITION_LINES: Record<SupportedLanguage, string> = {
+  Urdu: 'خوش آمدید! آج ہم ایک شاندار اور یادگار کہانی شروع کرنے جا رہے ہیں۔',
+  English: 'Welcome to the studio! Every scene is ready for lights, camera, and action.',
+  Arabic: 'مرحباً بكم في الاستوديو! قصتنا السينمائية المدهشة تبدأ الآن.',
+  Hindi: 'स्टूडियो में आपका स्वागत है! आज हम एक शानदार कहानी शुरू करने जा रहे हैं।',
+  Spanish: '¡Bienvenidos al estudio! Nuestra nueva historia cinematográfica comienza ahora.',
+  Turkish: 'Stüdyoya hoş geldiniz! Harika sinema hikayemiz şimdi başlıyor.',
+  French: 'Bienvenue au studio ! Notre nouvelle histoire cinématographique commence maintenant.',
+  Chinese: '欢迎来到电影工作室！我们精彩的故事现在正式开始。',
+};
+
 const QUICK_CHARACTER_PROMPTS = [
   {
     name: 'Zayd',
     age: '8 years',
     relation: 'Main Hero / Lead',
     voice: 'Puck' as VoicePersona,
-    prompt: '8-year-old innocent boy with soft curly dark hair, expressive brown eyes, and a bright warm smile wearing an explorer jacket',
+    prompt:
+      '8-year-old innocent boy with soft curly dark hair, expressive brown eyes, and a bright warm smile wearing an explorer jacket',
   },
   {
     name: 'Tariq Mahmood',
     age: '45 years',
     relation: 'Father',
     voice: 'Charon' as VoicePersona,
-    prompt: '45-year-old dignified wealthy businessman in a tailored dark charcoal suit, silver-streaked hair, composed gaze',
+    prompt:
+      '45-year-old dignified wealthy businessman in a tailored dark charcoal suit, silver-streaked hair, composed gaze',
   },
   {
     name: 'Amina',
     age: '38 years',
     relation: 'Mother',
     voice: 'Kore' as VoicePersona,
-    prompt: '38-year-old graceful compassionate mother wearing an elegant ivory shawl, warm intelligent eyes, gentle smile',
+    prompt:
+      '38-year-old graceful compassionate mother wearing an elegant ivory shawl, warm intelligent eyes, gentle smile',
   },
 ];
 
@@ -117,17 +134,74 @@ export const AsaanThreeStepStudio: React.FC<AsaanThreeStepStudioProps> = ({
   const [generatingFaces, setGeneratingFaces] = useState(false);
   const [faceCandidates, setFaceCandidates] = useState<CharacterFaceCandidate[]>([]);
   const [lockingFaceId, setLockingFaceId] = useState<string | null>(null);
+  const [auditioningVoice, setAuditioningVoice] = useState(false);
+  const [auditionAudioSrc, setAuditionAudioSrc] = useState<string | null>(null);
   const [section2Error, setSection2Error] = useState<string | null>(null);
 
   // Section 3 state
   const [isDictating, setIsDictating] = useState(false);
   const [dictationLang, setDictationLang] = useState<'en-US' | 'ur-PK' | 'hi-IN' | 'ar-SA'>('en-US');
+  const [enhancingScript, setEnhancingScript] = useState(false);
   const [targetSceneCount, setTargetSceneCount] = useState<number>(4);
   const [useFastMotion, setUseFastMotion] = useState<boolean>(defaultFastMotion);
   const [launchingPipeline, setLaunchingPipeline] = useState(false);
   const [section3Error, setSection3Error] = useState<string | null>(null);
 
   const recognitionRef = useRef<{ stop: () => void } | null>(null);
+  const storyPromptRef = useRef<string>(show.storyPrompt);
+
+  // Keep storyPromptRef synced so continuous voice dictation appends cleanly
+  useEffect(() => {
+    storyPromptRef.current = show.storyPrompt;
+  }, [show.storyPrompt]);
+
+  // Sync fast motion default when changed in Studio Preferences
+  useEffect(() => {
+    setUseFastMotion(defaultFastMotion);
+  }, [defaultFastMotion]);
+
+  // Reset transient per-show state and stop active dictation when switching shows
+  useEffect(() => {
+    setTitleSuggestions([]);
+    setFaceCandidates([]);
+    setSection1Error(null);
+    setSection2Error(null);
+    setSection3Error(null);
+    setAuditionAudioSrc(null);
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch {
+        // Ignore
+      }
+      recognitionRef.current = null;
+      setIsDictating(false);
+    }
+  }, [show.id]);
+
+  // Clean up speech recognition on unmount
+  useEffect(() => {
+    return () => {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch {
+          // Ignore
+        }
+        recognitionRef.current = null;
+      }
+    };
+  }, []);
+
+  // Tool 3: Live Production Runtime & Deliverable Estimator
+  const productionEstimate = useMemo(() => {
+    const clipSec = useFastMotion ? 4.5 : 6;
+    const introSec = show.includeIntro ? 4 : 0;
+    const creditsSec = show.includeEndCredits ? 5 : 0;
+    const totalSec = Math.round(targetSceneCount * clipSec + introSec + creditsSec);
+    const totalTasks = 1 + targetSceneCount * (2 + show.languages.length) + 4;
+    return { totalSec, totalTasks };
+  }, [targetSceneCount, useFastMotion, show.includeIntro, show.includeEndCredits, show.languages.length]);
 
   // --- Section 1 Handlers ---
   const handleSuggestTitles = async () => {
@@ -181,6 +255,26 @@ export const AsaanThreeStepStudio: React.FC<AsaanThreeStepStudioProps> = ({
   };
 
   // --- Section 2 Handlers ---
+  const handleAuditionVoice = async () => {
+    setAuditioningVoice(true);
+    setSection2Error(null);
+    try {
+      const primaryLang = show.languages[0] || 'English';
+      const sampleText = VOICE_AUDITION_LINES[primaryLang] || VOICE_AUDITION_LINES.English;
+      const res = await synthesizeSceneVoiceover({
+        text: sampleText,
+        language: primaryLang,
+        voicePersona: charVoice,
+        style: 'warm expressive studio narration',
+      });
+      setAuditionAudioSrc(`data:${res.mimeType};base64,${res.base64Data}`);
+    } catch (err) {
+      setSection2Error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAuditioningVoice(false);
+    }
+  };
+
   const handleGenerateCharacterFaces = async () => {
     if (!charName.trim() || !charPrompt.trim()) {
       setSection2Error('Please enter a Character Name and Visual Prompt before generating faces.');
@@ -241,7 +335,36 @@ export const AsaanThreeStepStudio: React.FC<AsaanThreeStepStudioProps> = ({
     }
   };
 
-  // --- Section 3 Voice Dictation Handler ---
+  // --- Section 3 Handlers ---
+  const handleEnhanceScript = async () => {
+    const seed = show.storyPrompt.trim() || show.titleIdeaPrompt.trim() || show.title.trim();
+    if (!seed) {
+      setSection3Error('Write a brief story idea or rough notes first so AI Script Enhancer can expand it.');
+      return;
+    }
+    setEnhancingScript(true);
+    setSection3Error(null);
+    try {
+      const enhanced = await enhanceStoryScript({
+        title: show.title || 'Untitled Show',
+        roughPrompt: seed,
+        contentMode: show.contentMode,
+        visualStyle: show.visualStyle,
+        languages: show.languages,
+        characters,
+        targetSceneCount,
+      });
+      if (enhanced.trim()) {
+        storyPromptRef.current = enhanced.trim();
+        onUpdateShow({ storyPrompt: enhanced.trim() });
+      }
+    } catch (err) {
+      setSection3Error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setEnhancingScript(false);
+    }
+  };
+
   const toggleVoiceDictation = () => {
     if (isDictating) {
       recognitionRef.current?.stop();
@@ -277,7 +400,9 @@ export const AsaanThreeStepStudio: React.FC<AsaanThreeStepStudioProps> = ({
           }
         }
         if (transcriptChunk.trim()) {
-          const updated = `${show.storyPrompt ? show.storyPrompt.trim() + ' ' : ''}${transcriptChunk.trim()}`;
+          const base = storyPromptRef.current.trim();
+          const updated = base ? `${base} ${transcriptChunk.trim()}` : transcriptChunk.trim();
+          storyPromptRef.current = updated;
           onUpdateShow({ storyPrompt: updated });
         }
       };
@@ -305,7 +430,9 @@ export const AsaanThreeStepStudio: React.FC<AsaanThreeStepStudioProps> = ({
 
   const handleLaunchProduction = async () => {
     if (!show.storyPrompt.trim()) {
-      setSection3Error('Please write or dictate your story, plot, or song lyrics in Section 3 first.');
+      setSection3Error(
+        'Please write, polish, or dictate your story, plot, or song lyrics in Section 3 first.'
+      );
       return;
     }
     setLaunchingPipeline(true);
@@ -325,12 +452,15 @@ export const AsaanThreeStepStudio: React.FC<AsaanThreeStepStudioProps> = ({
   return (
     <div className="space-y-8">
       {/* Show Switcher Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-zinc-800/80">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-zinc-200 dark:border-zinc-800/80">
         <div>
-          <div className="text-xs font-medium text-amber-400">
+          <div className="text-xs font-semibold text-amber-600 dark:text-amber-400">
             Asaan 3-Step Prompt Automation Workspace
           </div>
-          <h1 className="font-display text-2xl font-bold text-zinc-50 mt-0.5">
+          <h1
+            className="font-display text-2xl font-bold text-zinc-950 dark:text-zinc-50 mt-0.5"
+            style={{ textWrap: 'balance' }}
+          >
             {show.title || 'Untitled Show'}
           </h1>
         </div>
@@ -340,7 +470,7 @@ export const AsaanThreeStepStudio: React.FC<AsaanThreeStepStudioProps> = ({
             value={show.id}
             onChange={(e) => onSelectShow(e.target.value)}
             aria-label="Switch Active Show Profile"
-            className="min-h-[42px] rounded-xl border border-zinc-800 bg-zinc-900 px-3.5 py-2 text-xs font-medium text-zinc-200 focus:outline-none focus:border-amber-500 max-w-[220px]"
+            className="min-h-[44px] rounded-xl border border-zinc-300 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-3.5 py-2 text-xs font-medium text-zinc-900 dark:text-zinc-200 focus:outline-none focus:border-amber-500 max-w-[220px]"
           >
             {showsList.map((s) => (
               <option key={s.id} value={s.id}>
@@ -352,9 +482,9 @@ export const AsaanThreeStepStudio: React.FC<AsaanThreeStepStudioProps> = ({
           <button
             type="button"
             onClick={onCreateNewShow}
-            className="min-h-[42px] inline-flex items-center gap-1.5 rounded-xl border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 px-3.5 py-2 text-xs font-semibold text-zinc-200 whitespace-nowrap shrink-0 cursor-pointer"
+            className="min-h-[44px] inline-flex items-center gap-1.5 rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 hover:bg-zinc-100 dark:hover:bg-zinc-800 active:scale-[0.98] px-3.5 py-2 text-xs font-semibold text-zinc-900 dark:text-zinc-200 whitespace-nowrap shrink-0 cursor-pointer transition-all"
           >
-            <Plus className="w-3.5 h-3.5 text-amber-400" />
+            <Plus className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
             New Show
           </button>
         </div>
@@ -366,23 +496,25 @@ export const AsaanThreeStepStudio: React.FC<AsaanThreeStepStudioProps> = ({
       {/* ===================================================================== */}
       {/* PROMPT SECTION 1: TITLE & SERIES NAME GENERATOR + 1280x720 THUMBNAIL */}
       {/* ===================================================================== */}
-      <section className="rounded-2xl border border-zinc-800/80 bg-zinc-900/65 backdrop-blur-xl p-6 space-y-6">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 border-b border-zinc-800/80">
+      <section className="rounded-2xl border border-zinc-200 dark:border-zinc-800/80 bg-white dark:bg-zinc-900/65 backdrop-blur-xl p-5 sm:p-6 space-y-6 shadow-xs dark:shadow-none">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 border-b border-zinc-200 dark:border-zinc-800/80">
           <div>
-            <h2 className="font-display text-lg font-semibold text-zinc-50">
+            <h2 className="font-display text-lg font-semibold text-zinc-950 dark:text-zinc-50">
               01. Title & Series Name Generator
             </h2>
-            <p className="text-xs text-zinc-400 mt-0.5">
+            <p className="text-xs text-zinc-600 dark:text-zinc-400 mt-0.5">
               Enter a rough concept—Gemini suggests viral titles and Imagen generates your 1280×720 cover thumbnail.
             </p>
           </div>
-          <span className="text-xs font-mono tabular-nums text-amber-400">Step 1 of 3</span>
+          <span className="text-xs font-mono tabular-nums text-amber-600 dark:text-amber-400 font-semibold">
+            Step 1 of 3
+          </span>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
           <div className="lg:col-span-7 space-y-4">
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-zinc-300 block">
+              <label className="text-xs font-medium text-zinc-700 dark:text-zinc-300 block">
                 Rough Concept or Topic Prompt
               </label>
               <div className="flex flex-col sm:flex-row gap-2.5">
@@ -391,13 +523,13 @@ export const AsaanThreeStepStudio: React.FC<AsaanThreeStepStudioProps> = ({
                   value={show.titleIdeaPrompt}
                   onChange={(e) => onUpdateShow({ titleIdeaPrompt: e.target.value })}
                   placeholder="e.g., A brave little boy with a magical lantern saving his village..."
-                  className="flex-1 min-h-[44px] rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-amber-500"
+                  className="flex-1 min-h-[44px] rounded-xl border border-zinc-300 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 px-4 py-2.5 text-sm text-zinc-950 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 focus:outline-none focus:border-amber-500"
                 />
                 <button
                   type="button"
                   onClick={handleSuggestTitles}
                   disabled={suggestingTitles}
-                  className="min-h-[44px] inline-flex items-center justify-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-400 px-4 py-2.5 text-xs font-semibold text-zinc-950 transition-colors whitespace-nowrap shrink-0 disabled:opacity-60 cursor-pointer"
+                  className="min-h-[44px] inline-flex items-center justify-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-400 active:scale-[0.98] px-4 py-2.5 text-xs font-semibold text-zinc-950 transition-all whitespace-nowrap shrink-0 disabled:opacity-60 cursor-pointer"
                 >
                   {suggestingTitles ? (
                     <Loader2 className="w-4 h-4 animate-spin" />
@@ -410,7 +542,7 @@ export const AsaanThreeStepStudio: React.FC<AsaanThreeStepStudioProps> = ({
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-zinc-300 block">
+              <label className="text-xs font-medium text-zinc-700 dark:text-zinc-300 block">
                 Selected Production / Series Title
               </label>
               <input
@@ -418,14 +550,14 @@ export const AsaanThreeStepStudio: React.FC<AsaanThreeStepStudioProps> = ({
                 value={show.title}
                 onChange={(e) => onUpdateShow({ title: e.target.value })}
                 placeholder="Official Movie or Series Title"
-                className="w-full min-h-[44px] rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-2.5 text-sm font-semibold text-zinc-100 focus:outline-none focus:border-amber-500"
+                className="w-full min-h-[44px] rounded-xl border border-zinc-300 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 px-4 py-2.5 text-sm font-semibold text-zinc-950 dark:text-zinc-100 focus:outline-none focus:border-amber-500"
               />
             </div>
 
             {/* Suggested Viral Titles List */}
             {titleSuggestions.length > 0 && (
               <div className="space-y-2 pt-1">
-                <div className="text-xs text-zinc-400">
+                <div className="text-xs text-zinc-600 dark:text-zinc-400">
                   Click any AI-generated title below to apply & render its cover art:
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
@@ -440,13 +572,17 @@ export const AsaanThreeStepStudio: React.FC<AsaanThreeStepStudioProps> = ({
                         className={`rounded-xl border p-3.5 transition-colors cursor-pointer space-y-1.5 ${
                           isSelected
                             ? 'border-amber-500 bg-amber-500/10'
-                            : 'border-zinc-800 bg-zinc-950/60 hover:border-zinc-700'
+                            : 'border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950/60 hover:border-zinc-400 dark:hover:border-zinc-700'
                         }`}
                       >
-                        <div className="text-sm font-semibold text-zinc-100">{sug.title}</div>
-                        <p className="text-xs text-zinc-400 line-clamp-2">{sug.logline}</p>
-                        <div className="pt-1 flex items-center justify-between">
-                          <span className="text-[11px] text-amber-300 truncate max-w-[160px]">
+                        <div className="text-sm font-semibold text-zinc-950 dark:text-zinc-100">
+                          {sug.title}
+                        </div>
+                        <p className="text-xs text-zinc-600 dark:text-zinc-400 line-clamp-2">
+                          {sug.logline}
+                        </p>
+                        <div className="pt-1 flex items-center justify-between gap-2">
+                          <span className="text-[11px] text-amber-700 dark:text-amber-300 truncate max-w-[160px]">
                             {sug.platformHook}
                           </span>
                           <button
@@ -456,7 +592,7 @@ export const AsaanThreeStepStudio: React.FC<AsaanThreeStepStudioProps> = ({
                               onUpdateShow({ title: sug.title, logline: sug.logline });
                               void handleGenerateThumbnail(sug.thumbnailPrompt);
                             }}
-                            className="text-[11px] font-semibold text-zinc-200 underline hover:text-amber-300 cursor-pointer"
+                            className="text-[11px] font-semibold text-zinc-900 dark:text-zinc-200 underline hover:text-amber-600 dark:hover:text-amber-300 cursor-pointer shrink-0"
                           >
                             Use + Render Cover
                           </button>
@@ -469,7 +605,7 @@ export const AsaanThreeStepStudio: React.FC<AsaanThreeStepStudioProps> = ({
             )}
 
             {section1Error && (
-              <p className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-xl px-3.5 py-2.5">
+              <p className="text-xs text-amber-800 dark:text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-xl px-3.5 py-2.5">
                 {section1Error}
               </p>
             )}
@@ -477,15 +613,15 @@ export const AsaanThreeStepStudio: React.FC<AsaanThreeStepStudioProps> = ({
 
           {/* 1280x720 Cover Thumbnail Preview & Generator */}
           <div className="lg:col-span-5 space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-zinc-300">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
                 Cover Thumbnail (1280×720 · thumbnail.jpg)
               </span>
               <button
                 type="button"
                 onClick={() => handleGenerateThumbnail()}
                 disabled={generatingThumb}
-                className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-400 hover:text-amber-300 disabled:opacity-60 cursor-pointer"
+                className="min-h-[36px] inline-flex items-center gap-1.5 text-xs font-semibold text-amber-600 dark:text-amber-400 hover:text-amber-500 dark:hover:text-amber-300 disabled:opacity-60 cursor-pointer"
               >
                 {generatingThumb ? (
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -496,7 +632,7 @@ export const AsaanThreeStepStudio: React.FC<AsaanThreeStepStudioProps> = ({
               </button>
             </div>
 
-            <div className="aspect-video w-full rounded-xl overflow-hidden border border-zinc-800 bg-zinc-950 relative">
+            <div className="aspect-video w-full rounded-xl overflow-hidden border border-zinc-200 dark:border-zinc-800 bg-zinc-100 dark:bg-zinc-950 relative">
               <ResilientImage
                 assetIdOrUrl={show.thumbnailAssetId}
                 alt={`${show.title} cover thumbnail`}
@@ -511,24 +647,26 @@ export const AsaanThreeStepStudio: React.FC<AsaanThreeStepStudioProps> = ({
       {/* ===================================================================== */}
       {/* PROMPT SECTION 2: AI CHARACTER & ACTOR CREATOR (FACE LOCK)           */}
       {/* ===================================================================== */}
-      <section className="rounded-2xl border border-zinc-800/80 bg-zinc-900/65 backdrop-blur-xl p-6 space-y-6">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 border-b border-zinc-800/80">
+      <section className="rounded-2xl border border-zinc-200 dark:border-zinc-800/80 bg-white dark:bg-zinc-900/65 backdrop-blur-xl p-5 sm:p-6 space-y-6 shadow-xs dark:shadow-none">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 border-b border-zinc-200 dark:border-zinc-800/80">
           <div>
-            <h2 className="font-display text-lg font-semibold text-zinc-50">
+            <h2 className="font-display text-lg font-semibold text-zinc-950 dark:text-zinc-50">
               02. AI Character & Actor Creator (Prompt-Driven Face Lock)
             </h2>
-            <p className="text-xs text-zinc-400 mt-0.5">
-              Create unlimited heroes, parents, siblings, friends, or villains. Generate 4 faces via Imagen and lock your choice for 100% scene identity.
+            <p className="text-xs text-zinc-600 dark:text-zinc-400 mt-0.5">
+              Create unlimited heroes, parents, siblings, friends, or villains. Generate 4 faces via Imagen, audition their voice, and lock your choice for 100% scene identity.
             </p>
           </div>
-          <span className="text-xs font-mono tabular-nums text-violet-400">
+          <span className="text-xs font-mono tabular-nums text-violet-600 dark:text-violet-400 font-semibold">
             Step 2 of 3 · {characters.length} Locked in Cast
           </span>
         </div>
 
         {/* Quick 1-Click Character Starter Presets */}
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs text-zinc-400 mr-1">Quick Actor Templates:</span>
+          <span className="text-xs text-zinc-500 dark:text-zinc-400 mr-1">
+            Quick Actor Templates:
+          </span>
           {QUICK_CHARACTER_PROMPTS.map((preset) => (
             <button
               key={preset.name}
@@ -540,7 +678,7 @@ export const AsaanThreeStepStudio: React.FC<AsaanThreeStepStudioProps> = ({
                 setCharVoice(preset.voice);
                 setCharPrompt(preset.prompt);
               }}
-              className="rounded-lg border border-zinc-800 bg-zinc-950 hover:border-violet-500/50 px-3 py-1.5 text-xs text-zinc-300 transition-colors whitespace-nowrap cursor-pointer"
+              className="min-h-[38px] rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 hover:border-violet-500/60 px-3 py-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-300 transition-colors whitespace-nowrap cursor-pointer"
             >
               + {preset.name} ({preset.relation.split(' ')[0]})
             </button>
@@ -550,33 +688,39 @@ export const AsaanThreeStepStudio: React.FC<AsaanThreeStepStudioProps> = ({
         {/* Character Builder Form */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="space-y-1.5">
-            <label className="text-xs font-medium text-zinc-300 block">Actor / Character Name</label>
+            <label className="text-xs font-medium text-zinc-700 dark:text-zinc-300 block">
+              Actor / Character Name
+            </label>
             <input
               type="text"
               value={charName}
               onChange={(e) => setCharName(e.target.value)}
               placeholder="e.g., Zayd, Father Tariq, Sara"
-              className="w-full min-h-[42px] rounded-xl border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-violet-500"
+              className="w-full min-h-[44px] rounded-xl border border-zinc-300 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 px-3.5 py-2 text-sm text-zinc-950 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 focus:outline-none focus:border-violet-500"
             />
           </div>
 
           <div className="space-y-1.5">
-            <label className="text-xs font-medium text-zinc-300 block">Age</label>
+            <label className="text-xs font-medium text-zinc-700 dark:text-zinc-300 block">
+              Age
+            </label>
             <input
               type="text"
               value={charAge}
               onChange={(e) => setCharAge(e.target.value)}
               placeholder="e.g., 8 years, 45 years"
-              className="w-full min-h-[42px] rounded-xl border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-violet-500"
+              className="w-full min-h-[44px] rounded-xl border border-zinc-300 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 px-3.5 py-2 text-sm text-zinc-950 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 focus:outline-none focus:border-violet-500"
             />
           </div>
 
           <div className="space-y-1.5">
-            <label className="text-xs font-medium text-zinc-300 block">Role / Relation</label>
+            <label className="text-xs font-medium text-zinc-700 dark:text-zinc-300 block">
+              Role / Relation
+            </label>
             <select
               value={charRelation}
               onChange={(e) => setCharRelation(e.target.value)}
-              className="w-full min-h-[42px] rounded-xl border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-sm text-zinc-100 focus:outline-none focus:border-violet-500"
+              className="w-full min-h-[44px] rounded-xl border border-zinc-300 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 px-3.5 py-2 text-sm text-zinc-950 dark:text-zinc-100 focus:outline-none focus:border-violet-500"
             >
               {RELATION_PRESETS.map((rel) => (
                 <option key={rel} value={rel}>
@@ -586,12 +730,33 @@ export const AsaanThreeStepStudio: React.FC<AsaanThreeStepStudioProps> = ({
             </select>
           </div>
 
+          {/* Voice Persona + Live Audition Tool */}
           <div className="space-y-1.5">
-            <label className="text-xs font-medium text-zinc-300 block">Voice Persona</label>
+            <div className="flex items-center justify-between gap-2">
+              <label className="text-xs font-medium text-zinc-700 dark:text-zinc-300 block">
+                Voice Persona
+              </label>
+              <button
+                type="button"
+                onClick={handleAuditionVoice}
+                disabled={auditioningVoice}
+                className="inline-flex items-center gap-1 text-[11px] font-semibold text-violet-600 dark:text-violet-400 hover:text-violet-500 dark:hover:text-violet-300 disabled:opacity-60 cursor-pointer"
+              >
+                {auditioningVoice ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                ) : (
+                  <Volume2 className="w-3 h-3" />
+                )}
+                <span>{auditioningVoice ? 'Synthesizing...' : 'Audition Voice'}</span>
+              </button>
+            </div>
             <select
               value={charVoice}
-              onChange={(e) => setCharVoice(e.target.value as VoicePersona)}
-              className="w-full min-h-[42px] rounded-xl border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-sm text-zinc-100 focus:outline-none focus:border-violet-500"
+              onChange={(e) => {
+                setCharVoice(e.target.value as VoicePersona);
+                setAuditionAudioSrc(null);
+              }}
+              className="w-full min-h-[44px] rounded-xl border border-zinc-300 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 px-3.5 py-2 text-sm text-zinc-950 dark:text-zinc-100 focus:outline-none focus:border-violet-500"
             >
               {VOICE_PERSONAS.map((vp) => (
                 <option key={vp.value} value={vp.value}>
@@ -602,8 +767,18 @@ export const AsaanThreeStepStudio: React.FC<AsaanThreeStepStudioProps> = ({
           </div>
         </div>
 
+        {/* Inline Voice Audition Preview Player */}
+        {auditionAudioSrc && (
+          <div className="rounded-xl border border-violet-500/30 bg-violet-500/10 p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="text-xs font-medium text-violet-900 dark:text-violet-200">
+              Voice Audition · <span className="font-mono font-semibold">{charVoice}</span> ({show.languages[0] || 'English'})
+            </div>
+            <audio controls autoPlay src={auditionAudioSrc} className="h-9 w-full sm:w-72" />
+          </div>
+        )}
+
         <div className="space-y-2">
-          <label className="text-xs font-medium text-zinc-300 block">
+          <label className="text-xs font-medium text-zinc-700 dark:text-zinc-300 block">
             Character Visual Prompt (Face, Hair, Clothing, Expression)
           </label>
           <div className="flex flex-col sm:flex-row gap-3">
@@ -612,13 +787,13 @@ export const AsaanThreeStepStudio: React.FC<AsaanThreeStepStudioProps> = ({
               value={charPrompt}
               onChange={(e) => setCharPrompt(e.target.value)}
               placeholder="e.g., 8-year-old innocent boy with curly hair and bright smile wearing an amber hoodie"
-              className="flex-1 min-h-[46px] rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-violet-500"
+              className="flex-1 min-h-[46px] rounded-xl border border-zinc-300 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 px-4 py-2.5 text-sm text-zinc-950 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 focus:outline-none focus:border-violet-500"
             />
             <button
               type="button"
               onClick={handleGenerateCharacterFaces}
               disabled={generatingFaces}
-              className="min-h-[46px] inline-flex items-center justify-center gap-2 rounded-xl bg-violet-500 hover:bg-violet-400 px-5 py-2.5 text-xs font-semibold text-zinc-950 transition-colors whitespace-nowrap shrink-0 disabled:opacity-60 cursor-pointer"
+              className="min-h-[46px] inline-flex items-center justify-center gap-2 rounded-xl bg-violet-600 dark:bg-violet-500 hover:bg-violet-500 dark:hover:bg-violet-400 active:scale-[0.98] px-5 py-2.5 text-xs font-semibold text-white dark:text-zinc-950 transition-all whitespace-nowrap shrink-0 disabled:opacity-60 cursor-pointer"
             >
               {generatingFaces ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
@@ -633,7 +808,7 @@ export const AsaanThreeStepStudio: React.FC<AsaanThreeStepStudioProps> = ({
         </div>
 
         {section2Error && (
-          <p className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-xl px-3.5 py-2.5">
+          <p className="text-xs text-amber-800 dark:text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-xl px-3.5 py-2.5">
             {section2Error}
           </p>
         )}
@@ -641,16 +816,16 @@ export const AsaanThreeStepStudio: React.FC<AsaanThreeStepStudioProps> = ({
         {/* 4 Generated Face Candidates Grid */}
         {faceCandidates.length > 0 && (
           <div className="space-y-3 pt-2">
-            <div className="text-xs font-semibold text-violet-300">
+            <div className="text-xs font-semibold text-violet-700 dark:text-violet-300">
               Choose 1 of the 4 generated portraits below to permanently lock {charName}’s face:
             </div>
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
               {faceCandidates.map((cand) => (
                 <div
                   key={cand.id}
-                  className="rounded-xl border border-zinc-800 bg-zinc-950 overflow-hidden flex flex-col"
+                  className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 overflow-hidden flex flex-col"
                 >
-                  <div className="aspect-square w-full overflow-hidden bg-zinc-900">
+                  <div className="aspect-square w-full overflow-hidden bg-zinc-200 dark:bg-zinc-900">
                     <img
                       src={cand.dataUrl}
                       alt={cand.label}
@@ -659,12 +834,14 @@ export const AsaanThreeStepStudio: React.FC<AsaanThreeStepStudioProps> = ({
                     />
                   </div>
                   <div className="p-3 space-y-2.5">
-                    <div className="text-xs font-medium text-zinc-300">{cand.label}</div>
+                    <div className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                      {cand.label}
+                    </div>
                     <button
                       type="button"
                       onClick={() => handleSelectAndLockFace(cand)}
                       disabled={lockingFaceId === cand.id}
-                      className="w-full min-h-[38px] inline-flex items-center justify-center gap-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 px-3 py-1.5 text-xs font-semibold text-zinc-950 transition-colors whitespace-nowrap cursor-pointer"
+                      className="w-full min-h-[42px] inline-flex items-center justify-center gap-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 active:scale-[0.98] px-3 py-1.5 text-xs font-semibold text-zinc-950 transition-all whitespace-nowrap cursor-pointer"
                     >
                       <Lock className="w-3.5 h-3.5" />
                       <span>
@@ -681,17 +858,17 @@ export const AsaanThreeStepStudio: React.FC<AsaanThreeStepStudioProps> = ({
         {/* Locked Character Roster */}
         {characters.length > 0 ? (
           <div className="space-y-3 pt-2">
-            <div className="text-xs font-medium text-zinc-400">
+            <div className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
               Locked Cast Roster for “{show.title}” (automatically injected into every scene):
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
               {characters.map((actor) => (
                 <div
                   key={actor.id}
-                  className="flex items-center justify-between gap-3 rounded-xl border border-zinc-800 bg-zinc-950/80 p-3"
+                  className="flex items-center justify-between gap-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950/80 p-3"
                 >
                   <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-14 h-14 rounded-xl overflow-hidden shrink-0 border border-zinc-800">
+                    <div className="w-14 h-14 rounded-xl overflow-hidden shrink-0 border border-zinc-200 dark:border-zinc-800">
                       <ResilientImage
                         assetIdOrUrl={actor.lockedFaceAssetId}
                         alt={actor.name}
@@ -700,14 +877,14 @@ export const AsaanThreeStepStudio: React.FC<AsaanThreeStepStudioProps> = ({
                     </div>
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5">
-                        <span className="text-sm font-semibold text-zinc-100 truncate">
+                        <span className="text-sm font-semibold text-zinc-950 dark:text-zinc-100 truncate">
                           {actor.name}
                         </span>
                         {actor.faceLocked && (
-                          <Lock className="w-3 h-3 text-emerald-400 shrink-0" />
+                          <Lock className="w-3 h-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
                         )}
                       </div>
-                      <div className="text-xs text-zinc-400 truncate">
+                      <div className="text-xs text-zinc-600 dark:text-zinc-400 truncate">
                         {actor.age} · {actor.relation} · {actor.voicePersona}
                       </div>
                     </div>
@@ -717,7 +894,7 @@ export const AsaanThreeStepStudio: React.FC<AsaanThreeStepStudioProps> = ({
                     type="button"
                     onClick={() => onDeleteCharacter(actor.id)}
                     aria-label={`Remove ${actor.name}`}
-                    className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg text-zinc-500 hover:text-red-400 hover:bg-zinc-900 transition-colors shrink-0 cursor-pointer"
+                    className="min-h-[42px] min-w-[42px] flex items-center justify-center rounded-lg text-zinc-500 hover:text-red-500 dark:hover:text-red-400 hover:bg-zinc-200/70 dark:hover:bg-zinc-900 transition-colors shrink-0 cursor-pointer"
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
@@ -726,19 +903,19 @@ export const AsaanThreeStepStudio: React.FC<AsaanThreeStepStudioProps> = ({
             </div>
           </div>
         ) : (
-          <div className="rounded-xl border border-dashed border-zinc-800 p-4 text-xs text-zinc-400">
+          <div className="rounded-xl border border-dashed border-zinc-300 dark:border-zinc-800 p-4 text-xs text-zinc-600 dark:text-zinc-400">
             No locked characters added yet. Add cast members above for strict multi-scene face locking, or proceed directly to let Gemini cast scenes automatically.
           </div>
         )}
 
         {/* Intro & End Credits Sequence Toggles */}
-        <div className="pt-4 border-t border-zinc-800/80 grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <label className="flex items-center justify-between gap-3 rounded-xl border border-zinc-800 bg-zinc-950/60 p-3.5 cursor-pointer">
+        <div className="pt-4 border-t border-zinc-200 dark:border-zinc-800/80 grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <label className="flex items-center justify-between gap-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950/60 p-3.5 cursor-pointer">
             <div>
-              <div className="text-xs font-semibold text-zinc-100">
+              <div className="text-xs font-semibold text-zinc-950 dark:text-zinc-100">
                 Include Studio & Cast Intro (intro_sequence.mp4)
               </div>
-              <div className="text-[11px] text-zinc-400 mt-0.5">
+              <div className="text-[11px] text-zinc-600 dark:text-zinc-400 mt-0.5">
                 Generates opening production house & character title clip
               </div>
             </div>
@@ -750,12 +927,12 @@ export const AsaanThreeStepStudio: React.FC<AsaanThreeStepStudioProps> = ({
             />
           </label>
 
-          <label className="flex items-center justify-between gap-3 rounded-xl border border-zinc-800 bg-zinc-950/60 p-3.5 cursor-pointer">
+          <label className="flex items-center justify-between gap-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950/60 p-3.5 cursor-pointer">
             <div>
-              <div className="text-xs font-semibold text-zinc-100">
+              <div className="text-xs font-semibold text-zinc-950 dark:text-zinc-100">
                 Include Scrolling Credits Roll (end_credits.mp4)
               </div>
-              <div className="text-[11px] text-zinc-400 mt-0.5">
+              <div className="text-[11px] text-zinc-600 dark:text-zinc-400 mt-0.5">
                 Renders theatrical scrolling cast & music credits roll
               </div>
             </div>
@@ -770,28 +947,42 @@ export const AsaanThreeStepStudio: React.FC<AsaanThreeStepStudioProps> = ({
       </section>
 
       {/* ===================================================================== */}
-      {/* PROMPT SECTION 3: STORY, SCRIPT & VIDEO PRODUCTION + VOICE MIC       */}
+      {/* PROMPT SECTION 3: STORY, SCRIPT & VIDEO PRODUCTION + VOICE MIC + AI  */}
       {/* ===================================================================== */}
-      <section className="rounded-2xl border border-zinc-800/80 bg-zinc-900/65 backdrop-blur-xl p-6 space-y-6">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-zinc-800/80">
+      <section className="rounded-2xl border border-zinc-200 dark:border-zinc-800/80 bg-white dark:bg-zinc-900/65 backdrop-blur-xl p-5 sm:p-6 space-y-6 shadow-xs dark:shadow-none">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pb-4 border-b border-zinc-200 dark:border-zinc-800/80">
           <div>
-            <h2 className="font-display text-lg font-semibold text-zinc-50">
+            <h2 className="font-display text-lg font-semibold text-zinc-950 dark:text-zinc-50">
               03. Story, Script & Video Production Prompt
             </h2>
-            <p className="text-xs text-zinc-400 mt-0.5">
-              Write or speak your story, drama episode plot, or song lyrics. Our background queue builds all scenes, voiceovers, music, and your Universal ZIP.
+            <p className="text-xs text-zinc-600 dark:text-zinc-400 mt-0.5">
+              Write, polish with AI, or speak your story, drama episode plot, or song lyrics. Our background queue builds all scenes, voiceovers, .SRT subtitles, music, and your Universal ZIP.
             </p>
           </div>
 
-          {/* Voice Dictation Controls */}
-          <div className="flex items-center gap-2 shrink-0">
+          {/* Script Enhancer + Voice Dictation Controls */}
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={handleEnhanceScript}
+              disabled={enhancingScript}
+              className="min-h-[42px] inline-flex items-center gap-2 rounded-xl border border-violet-500/40 bg-violet-500/10 hover:bg-violet-500/20 active:scale-[0.98] px-3.5 py-2 text-xs font-semibold text-violet-700 dark:text-violet-300 transition-all whitespace-nowrap disabled:opacity-60 cursor-pointer"
+            >
+              {enhancingScript ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Sparkles className="w-4 h-4" />
+              )}
+              <span>{enhancingScript ? 'Polishing...' : 'AI Polish Script'}</span>
+            </button>
+
             <select
               value={dictationLang}
               onChange={(e) =>
                 setDictationLang(e.target.value as 'en-US' | 'ur-PK' | 'hi-IN' | 'ar-SA')
               }
               aria-label="Voice Dictation Language"
-              className="min-h-[40px] rounded-xl border border-zinc-800 bg-zinc-950 px-2.5 py-1.5 text-xs text-zinc-300 focus:outline-none focus:border-amber-500"
+              className="min-h-[42px] rounded-xl border border-zinc-300 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 px-2.5 py-1.5 text-xs text-zinc-900 dark:text-zinc-300 focus:outline-none focus:border-amber-500"
             >
               <option value="en-US">Mic: English</option>
               <option value="ur-PK">Mic: Urdu (اردو)</option>
@@ -802,10 +993,10 @@ export const AsaanThreeStepStudio: React.FC<AsaanThreeStepStudioProps> = ({
             <button
               type="button"
               onClick={toggleVoiceDictation}
-              className={`min-h-[40px] inline-flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer ${
+              className={`min-h-[42px] inline-flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-semibold transition-all active:scale-[0.98] whitespace-nowrap cursor-pointer ${
                 isDictating
                   ? 'bg-red-500 text-white'
-                  : 'border border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300'
+                  : 'border border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 text-amber-700 dark:text-amber-300'
               }`}
             >
               {isDictating ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
@@ -820,13 +1011,13 @@ export const AsaanThreeStepStudio: React.FC<AsaanThreeStepStudioProps> = ({
             value={show.storyPrompt}
             onChange={(e) => onUpdateShow({ storyPrompt: e.target.value })}
             placeholder="Write or speak your full episode story, dialogue scenes, moral tale, or song lyrics here..."
-            className="w-full rounded-xl border border-zinc-800 bg-zinc-950 p-4 text-sm text-zinc-100 placeholder:text-zinc-500 leading-relaxed focus:outline-none focus:border-amber-500"
+            className="w-full rounded-xl border border-zinc-300 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 p-4 text-sm text-zinc-950 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 leading-relaxed focus:outline-none focus:border-amber-500"
           />
-          <div className="flex items-center justify-between text-xs text-zinc-500 font-mono tabular-nums">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-xs text-zinc-500 font-mono tabular-nums">
             <span>
               {isDictating
                 ? 'Microphone active — speak naturally to append to story...'
-                : 'Auto-splits into sequential numbered scenes (scene_01, scene_02...)'}
+                : 'Auto-splits into sequential numbered scenes (scene_01, scene_02...) + .SRT captions'}
             </span>
             <span>{show.storyPrompt.length} / 8000 chars</span>
           </div>
@@ -834,12 +1025,12 @@ export const AsaanThreeStepStudio: React.FC<AsaanThreeStepStudioProps> = ({
 
         {/* Trailer Toggle, Scene Count & Motion Engine */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
-          <label className="flex items-center justify-between gap-3 rounded-xl border border-zinc-800 bg-zinc-950/60 p-3.5 cursor-pointer">
+          <label className="flex items-center justify-between gap-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950/60 p-3.5 cursor-pointer">
             <div>
-              <div className="text-xs font-semibold text-zinc-100">
+              <div className="text-xs font-semibold text-zinc-950 dark:text-zinc-100">
                 Official Promo Teaser (trailer.mp4)
               </div>
-              <div className="text-[11px] text-zinc-400 mt-0.5">
+              <div className="text-[11px] text-zinc-600 dark:text-zinc-400 mt-0.5">
                 Adds dedicated promo teaser clip to ZIP root
               </div>
             </div>
@@ -851,15 +1042,19 @@ export const AsaanThreeStepStudio: React.FC<AsaanThreeStepStudioProps> = ({
             />
           </label>
 
-          <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3.5 flex items-center justify-between gap-3">
+          <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950/60 p-3.5 flex items-center justify-between gap-3">
             <div>
-              <div className="text-xs font-semibold text-zinc-100">Sequential Scenes</div>
-              <div className="text-[11px] text-zinc-400 mt-0.5">Numbered clips in video_clips/</div>
+              <div className="text-xs font-semibold text-zinc-950 dark:text-zinc-100">
+                Sequential Scenes
+              </div>
+              <div className="text-[11px] text-zinc-600 dark:text-zinc-400 mt-0.5">
+                Numbered clips in video_clips/
+              </div>
             </div>
             <select
               value={targetSceneCount}
               onChange={(e) => setTargetSceneCount(Number(e.target.value))}
-              className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-xs font-mono tabular-nums text-zinc-100 focus:outline-none"
+              className="min-h-[38px] rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-1.5 text-xs font-mono tabular-nums text-zinc-950 dark:text-zinc-100 focus:outline-none"
             >
               <option value={2}>2 Scenes (Quick)</option>
               <option value={3}>3 Scenes</option>
@@ -869,17 +1064,19 @@ export const AsaanThreeStepStudio: React.FC<AsaanThreeStepStudioProps> = ({
             </select>
           </div>
 
-          <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3.5 flex items-center justify-between gap-3">
+          <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950/60 p-3.5 flex items-center justify-between gap-3">
             <div>
-              <div className="text-xs font-semibold text-zinc-100">Video Motion Engine</div>
-              <div className="text-[11px] text-zinc-400 mt-0.5">
+              <div className="text-xs font-semibold text-zinc-950 dark:text-zinc-100">
+                Video Motion Engine
+              </div>
+              <div className="text-[11px] text-zinc-600 dark:text-zinc-400 mt-0.5">
                 {useFastMotion ? 'Fast Studio Camera Pan' : 'Veo AI Video Synthesis'}
               </div>
             </div>
             <button
               type="button"
               onClick={() => setUseFastMotion((v) => !v)}
-              className="rounded-lg border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 px-3 py-1.5 text-xs font-semibold text-amber-300 whitespace-nowrap cursor-pointer"
+              className="min-h-[38px] rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 hover:bg-zinc-100 dark:hover:bg-zinc-800 px-3 py-1.5 text-xs font-semibold text-amber-700 dark:text-amber-300 whitespace-nowrap cursor-pointer transition-colors"
             >
               {useFastMotion ? 'Studio Fast' : 'Veo AI Full'}
             </button>
@@ -887,23 +1084,28 @@ export const AsaanThreeStepStudio: React.FC<AsaanThreeStepStudioProps> = ({
         </div>
 
         {section3Error && (
-          <p className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-xl px-3.5 py-2.5">
+          <p className="text-xs text-amber-800 dark:text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-xl px-3.5 py-2.5">
             {section3Error}
           </p>
         )}
 
-        {/* Primary Production Launch Bar */}
-        <div className="pt-4 border-t border-zinc-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="space-y-1 text-xs text-zinc-400">
-            <div className="flex items-center gap-1.5 text-zinc-200 font-medium">
-              <Check className="w-4 h-4 text-emerald-400" />
-              <span>
-                Crash-proof background queue · 3x auto-retry · Checkpoint recovery enabled
+        {/* Primary Production Launch Bar + Live Runtime/Deliverable Estimator */}
+        <div className="pt-4 border-t border-zinc-200 dark:border-zinc-800/80 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div className="space-y-1.5 text-xs text-zinc-600 dark:text-zinc-400">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-zinc-900 dark:text-zinc-200 font-medium">
+              <span className="inline-flex items-center gap-1.5">
+                <Check className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                Est. Runtime: <span className="font-mono tabular-nums font-semibold">~{productionEstimate.totalSec}s</span>
+              </span>
+              <span className="text-zinc-400">·</span>
+              <span className="font-mono tabular-nums">
+                {productionEstimate.totalTasks} Auto-Retried Pipeline Steps
               </span>
             </div>
             <div>
-              Bundles thumbnail.jpg, video_clips/scene_01..{String(targetSceneCount).padStart(2, '0')}.mp4,{' '}
-              {show.languages.map((l) => `audio_${l.toLowerCase()}/`).join(', ')}, background_music/, and production_script.txt
+              ZIP Bundles: thumbnail.jpg, video_clips/scene_01..{String(targetSceneCount).padStart(2, '0')}.mp4,{' '}
+              {show.languages.map((l) => `audio_${l.toLowerCase()}/`).join(', ')},{' '}
+              {show.languages.map((l) => `subtitles_${l.toLowerCase()}/ (.srt)`).join(', ')}, edl_timeline_markers.csv &amp; production_script.txt
             </div>
           </div>
 
@@ -911,7 +1113,7 @@ export const AsaanThreeStepStudio: React.FC<AsaanThreeStepStudioProps> = ({
             type="button"
             onClick={handleLaunchProduction}
             disabled={launchingPipeline}
-            className="min-h-[52px] inline-flex items-center justify-center gap-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 px-6 py-3 text-sm font-bold text-zinc-950 shadow-lg shadow-amber-500/10 transition-colors whitespace-nowrap shrink-0 disabled:opacity-60 cursor-pointer"
+            className="min-h-[52px] inline-flex items-center justify-center gap-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 active:scale-[0.98] px-6 py-3 text-sm font-bold text-zinc-950 shadow-lg shadow-amber-500/15 transition-all whitespace-nowrap shrink-0 disabled:opacity-60 cursor-pointer"
           >
             {launchingPipeline ? (
               <Loader2 className="w-5 h-5 animate-spin" />

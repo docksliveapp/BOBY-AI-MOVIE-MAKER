@@ -7,20 +7,14 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   auth,
   createCharacterInFirestore,
-  createRenderJobInFirestore,
   createShowInFirestore,
-  deleteCharacterFromFirestore,
-  deleteRenderJobFromFirestore,
-  deleteShowFromFirestore,
   onAuthStateChanged,
   signInWithGooglePopup,
   signOutFirebase,
+  subscribeFirestoreSyncEvent,
   subscribeShowCharacters,
   subscribeUserRenderJobs,
   subscribeUserShows,
-  updateCharacterInFirestore,
-  updateRenderJobInFirestore,
-  updateShowInFirestore,
 } from './firebase';
 import type {
   AspectRatioOption,
@@ -35,7 +29,18 @@ import type {
   VisualStyle,
 } from './types';
 import { mediaPipeline } from './services/mediaPipeline';
-import { getCheckpointFromVault, saveCheckpointToVault } from './services/mediaVault';
+import {
+  getCheckpointFromVault,
+  getOfflineUserSnapshot,
+  getPendingOfflineMutations,
+  saveCheckpointToVault,
+  saveOfflineUserSnapshot,
+} from './services/mediaVault';
+import {
+  executeOrQueueCloudMutation,
+  flushOfflineSyncOutbox,
+  type SyncEngineState,
+} from './services/offlineSyncEngine';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { WelcomeAuthScreen } from './components/WelcomeAuthScreen';
 import { StudioLayout } from './components/StudioLayout';
@@ -48,6 +53,36 @@ import { ReadyDownloadsView } from './components/ReadyDownloadsView';
 const DEMO_STORAGE_SHOWS = 'boby_studio_demo_shows_v1';
 const DEMO_STORAGE_CHARS = 'boby_studio_demo_chars_v1';
 const DEMO_STORAGE_JOBS = 'boby_studio_demo_jobs_v1';
+const THEME_STORAGE_KEY = 'boby_studio_theme';
+
+function getInitialTheme(): 'dark' | 'light' {
+  try {
+    const saved = localStorage.getItem(THEME_STORAGE_KEY);
+    if (saved === 'light' || saved === 'dark') return saved;
+  } catch {
+    // Ignore storage access errors
+  }
+  return 'dark';
+}
+
+function getInitialTabFromUrl(): NavigationTab {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const tab = params.get('tab');
+    if (
+      tab === 'dashboard' ||
+      tab === 'shows' ||
+      tab === 'studio' ||
+      tab === 'queue' ||
+      tab === 'downloads'
+    ) {
+      return tab;
+    }
+  } catch {
+    // Ignore
+  }
+  return 'dashboard';
+}
 
 function buildStarterShows(ownerId: string): ShowProfile[] {
   const now = Date.now();
@@ -56,8 +91,10 @@ function buildStarterShows(ownerId: string): ShowProfile[] {
       id: `show_skykeeper_${ownerId.slice(0, 8)}`,
       ownerId,
       title: 'The Clockwork Skykeeper',
-      titleIdeaPrompt: 'An 8-year-old boy discovers his grandfather’s brass observatory controls the village sunrise.',
-      logline: 'When the mountain observatory freezes before dawn, young Zayd bravely restarts the golden sun-gears.',
+      titleIdeaPrompt:
+        'An 8-year-old boy discovers his grandfather’s brass observatory controls the village sunrise.',
+      logline:
+        'When the mountain observatory freezes before dawn, young Zayd bravely restarts the golden sun-gears.',
       contentMode: 'cartoon_3d',
       visualStyle: 'pixar_3d',
       aspectRatio: '16:9',
@@ -78,8 +115,10 @@ function buildStarterShows(ownerId: string): ShowProfile[] {
       id: `show_boardroom_${ownerId.slice(0, 8)}`,
       ownerId,
       title: 'Shadows Over Clifton',
-      titleIdeaPrompt: 'A wealthy industrialist confronts long-buried family secrets on the 40th floor.',
-      logline: 'At twilight above the city skyline, two brothers uncover their late father’s final ledger.',
+      titleIdeaPrompt:
+        'A wealthy industrialist confronts long-buried family secrets on the 40th floor.',
+      logline:
+        'At twilight above the city skyline, two brothers uncover their late father’s final ledger.',
       contentMode: 'human_movie',
       visualStyle: 'hollywood_live',
       aspectRatio: '2.39:1',
@@ -120,9 +159,10 @@ function buildStarterCharacter(showId: string, ownerId: string): CharacterActor 
 }
 
 function StudioAppInner() {
+  const [theme, setTheme] = useState<'dark' | 'light'>(getInitialTheme);
   const [authReady, setAuthReady] = useState(false);
   const [userSession, setUserSession] = useState<UserSession | null>(null);
-  const [activeTab, setActiveTab] = useState<NavigationTab>('dashboard');
+  const [activeTab, setActiveTab] = useState<NavigationTab>(getInitialTabFromUrl);
 
   const [shows, setShows] = useState<ShowProfile[]>([]);
   const [activeShowId, setActiveShowId] = useState<string>('');
@@ -134,8 +174,45 @@ function StudioAppInner() {
   const [notifications, setNotifications] = useState<StudioNotification[]>([]);
   const [firestoreErrorBanner, setFirestoreErrorBanner] = useState<string | null>(null);
 
+  // Offline-first Database & Auto-Sync state
+  const [syncState, setSyncState] = useState<SyncEngineState>('local_only');
+  const [pendingSyncCount, setPendingSyncCount] = useState<number>(0);
+
   const seededForUidRef = useRef<string | null>(null);
   const showUpdateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hydratedSnapshotRef = useRef<boolean>(false);
+
+  const isCloudUser = Boolean(userSession && !userSession.isDemo && userSession.emailVerified);
+
+  // Apply Light/Dark theme class to <html> and persist preference
+  useEffect(() => {
+    const root = document.documentElement;
+    if (theme === 'dark') {
+      root.classList.add('dark');
+      root.style.colorScheme = 'dark';
+    } else {
+      root.classList.remove('dark');
+      root.style.colorScheme = 'light';
+    }
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, theme);
+    } catch {
+      // Ignore
+    }
+  }, [theme]);
+
+  const handleToggleTheme = useCallback(() => {
+    setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
+  }, []);
+
+  // Clean up any pending debounced save timer on unmount
+  useEffect(() => {
+    return () => {
+      if (showUpdateTimerRef.current) {
+        clearTimeout(showUpdateTimerRef.current);
+      }
+    };
+  }, []);
 
   const pushNotification = useCallback(
     (
@@ -160,6 +237,94 @@ function StudioAppInner() {
     []
   );
 
+  // Refresh pending outbox count helper
+  const refreshPendingSyncStatus = useCallback(
+    async (uid: string, cloudEnabled: boolean) => {
+      if (!cloudEnabled) {
+        setPendingSyncCount(0);
+        setSyncState('local_only');
+        return;
+      }
+      try {
+        const pending = await getPendingOfflineMutations(uid);
+        setPendingSyncCount(pending.length);
+        if (!navigator.onLine || pending.length > 0) {
+          setSyncState('offline_pending');
+        } else {
+          setSyncState('synced');
+        }
+      } catch {
+        // Ignore IndexedDB transient errors
+      }
+    },
+    []
+  );
+
+  // Flush queued IndexedDB mutations to Firebase Cloud once online
+  const handleSyncNow = useCallback(async () => {
+    if (!userSession || userSession.isDemo || !userSession.emailVerified) {
+      setSyncState('local_only');
+      return;
+    }
+    if (!navigator.onLine) {
+      await refreshPendingSyncStatus(userSession.uid, true);
+      return;
+    }
+
+    setSyncState('syncing');
+    try {
+      const { syncedCount, remainingCount } = await flushOfflineSyncOutbox(userSession.uid);
+      setPendingSyncCount(remainingCount);
+      setSyncState(remainingCount > 0 ? 'offline_pending' : 'synced');
+      if (syncedCount > 0) {
+        pushNotification(
+          'Offline Changes Synced to Cloud',
+          `${syncedCount} queued studio update${syncedCount === 1 ? '' : 's'} synchronized with Firebase Firestore.`,
+          'success'
+        );
+      }
+    } catch {
+      await refreshPendingSyncStatus(userSession.uid, true);
+    }
+  }, [userSession, pushNotification, refreshPendingSyncStatus]);
+
+  // Listen to browser online/offline events + Firestore in-sync events for instant auto-sync
+  useEffect(() => {
+    if (!userSession) return;
+    if (!isCloudUser) {
+      setSyncState('local_only');
+      setPendingSyncCount(0);
+      return;
+    }
+
+    const onOnline = () => {
+      void handleSyncNow();
+    };
+    const onOffline = () => {
+      setSyncState('offline_pending');
+    };
+
+    window.addEventListener('online', onOnline);
+    window.addEventListener('offline', onOffline);
+
+    const unsubFirestoreSync = subscribeFirestoreSyncEvent(() => {
+      void refreshPendingSyncStatus(userSession.uid, true);
+    });
+
+    // Attempt immediate flush if we started online with queued items from a previous offline session
+    if (navigator.onLine) {
+      void handleSyncNow();
+    } else {
+      void refreshPendingSyncStatus(userSession.uid, true);
+    }
+
+    return () => {
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', onOffline);
+      unsubFirestoreSync();
+    };
+  }, [userSession, isCloudUser, handleSyncNow, refreshPendingSyncStatus]);
+
   // Firebase Auth listener
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (fbUser) => {
@@ -180,11 +345,36 @@ function StudioAppInner() {
     return () => unsub();
   }, []);
 
-  // Load / Subscribe Shows & Jobs based on Cloud vs Demo mode
+  // Load / Hydrate Embedded Offline DB + Subscribe Cloud Shows & Jobs
   useEffect(() => {
     if (!authReady || !userSession) return;
+    hydratedSnapshotRef.current = false;
+
+    let cancelled = false;
+
+    // 1. Hydrate immediately from embedded IndexedDB offline database (instant offline launch!)
+    void (async () => {
+      try {
+        const snapshot = await getOfflineUserSnapshot(userSession.uid);
+        if (!cancelled && snapshot && snapshot.shows.length > 0) {
+          setShows((curr) => (curr.length > 0 ? curr : snapshot.shows));
+          setActiveShowId((curr) => curr || snapshot.shows[0].id);
+          setCharactersByShow((curr) =>
+            Object.keys(curr).length > 0 ? curr : snapshot.charactersByShow || {}
+          );
+          setJobs((curr) => (curr.length > 0 ? curr : snapshot.jobs || []));
+        }
+      } catch {
+        // Ignore IndexedDB read error
+      } finally {
+        if (!cancelled) {
+          hydratedSnapshotRef.current = true;
+        }
+      }
+    })();
 
     if (userSession.isDemo) {
+      setSyncState('local_only');
       try {
         const rawShows = localStorage.getItem(DEMO_STORAGE_SHOWS);
         const parsedShows: ShowProfile[] = rawShows
@@ -215,26 +405,36 @@ function StudioAppInner() {
         setShows(fallback);
         setActiveShowId(fallback[0].id);
       }
-      return;
+      return () => {
+        cancelled = true;
+      };
     }
 
-    // Authenticated Firebase User with Verified Email
+    // Authenticated Firebase User with Unverified Email
     if (!userSession.emailVerified) {
+      setSyncState('local_only');
       setFirestoreErrorBanner(
-        'Your Google account email is unverified. Running with local session storage until verified.'
+        'Your Google account email is unverified. Running with embedded offline database until verified.'
       );
       const fallback = buildStarterShows(userSession.uid);
       setShows(fallback);
       setActiveShowId(fallback[0].id);
-      return;
+      return () => {
+        cancelled = true;
+      };
     }
 
+    setFirestoreErrorBanner(null);
     let unsubShows = () => {};
     let unsubJobs = () => {};
 
     try {
       unsubShows = subscribeUserShows(userSession.uid, async (cloudShows) => {
-        if (cloudShows.length === 0 && seededForUidRef.current !== userSession.uid) {
+        if (
+          cloudShows.length === 0 &&
+          seededForUidRef.current !== userSession.uid &&
+          navigator.onLine
+        ) {
           seededForUidRef.current = userSession.uid;
           const starters = buildStarterShows(userSession.uid);
           try {
@@ -248,26 +448,49 @@ function StudioAppInner() {
           }
           return;
         }
-        setShows(cloudShows);
-        if (cloudShows.length > 0) {
-          setActiveShowId((curr) =>
-            cloudShows.some((s) => s.id === curr) ? curr : cloudShows[0].id
-          );
+        if (cloudShows.length > 0 || navigator.onLine) {
+          setShows(cloudShows);
+          if (cloudShows.length > 0) {
+            setActiveShowId((curr) =>
+              cloudShows.some((s) => s.id === curr) ? curr : cloudShows[0].id
+            );
+          }
         }
       });
 
       unsubJobs = subscribeUserRenderJobs(userSession.uid, (cloudJobs) => {
-        setJobs(cloudJobs);
+        if (cloudJobs.length > 0 || navigator.onLine) {
+          setJobs(cloudJobs);
+        }
       });
     } catch (err) {
       setFirestoreErrorBanner(err instanceof Error ? err.message : String(err));
     }
 
     return () => {
+      cancelled = true;
       unsubShows();
       unsubJobs();
     };
   }, [authReady, userSession]);
+
+  // Continuously mirror state to embedded IndexedDB offline database so app works 100% offline
+  useEffect(() => {
+    if (!userSession || !hydratedSnapshotRef.current) return;
+    if (shows.length === 0 && jobs.length === 0) return;
+
+    const timer = setTimeout(() => {
+      void saveOfflineUserSnapshot({
+        uid: userSession.uid,
+        shows,
+        charactersByShow,
+        jobs,
+        updatedAtMs: Date.now(),
+      }).catch(() => {});
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [userSession, shows, charactersByShow, jobs]);
 
   // Subscribe to Active Show Characters in Cloud Mode
   useEffect(() => {
@@ -287,23 +510,29 @@ function StudioAppInner() {
     return () => unsub();
   }, [authReady, userSession, activeShowId]);
 
-  const persistDemoShows = (nextShows: ShowProfile[]) => {
-    setShows(nextShows);
-    try {
-      localStorage.setItem(DEMO_STORAGE_SHOWS, JSON.stringify(nextShows));
-    } catch {
-      // Ignore quota
-    }
-  };
+  const persistDemoShows = useCallback((updater: ShowProfile[] | ((prev: ShowProfile[]) => ShowProfile[])) => {
+    setShows((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      try {
+        localStorage.setItem(DEMO_STORAGE_SHOWS, JSON.stringify(next));
+      } catch {
+        // Ignore quota
+      }
+      return next;
+    });
+  }, []);
 
-  const persistDemoJobs = (nextJobs: RenderJob[]) => {
-    setJobs(nextJobs);
-    try {
-      localStorage.setItem(DEMO_STORAGE_JOBS, JSON.stringify(nextJobs));
-    } catch {
-      // Ignore quota
-    }
-  };
+  const persistDemoJobs = useCallback((updater: RenderJob[] | ((prev: RenderJob[]) => RenderJob[])) => {
+    setJobs((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      try {
+        localStorage.setItem(DEMO_STORAGE_JOBS, JSON.stringify(next));
+      } catch {
+        // Ignore quota
+      }
+      return next;
+    });
+  }, []);
 
   const activeShow: ShowProfile | undefined = useMemo(() => {
     return shows.find((s) => s.id === activeShowId) || shows[0];
@@ -336,7 +565,7 @@ function StudioAppInner() {
     });
     pushNotification(
       'Welcome to BOBY AI MOVIE MAKER',
-      'Demo Studio active. All 3 AI prompt sections and Universal ZIP exports are live.',
+      'Local Offline Studio active. All 3 AI prompt sections and Universal ZIP exports are ready.',
       'info'
     );
   };
@@ -347,10 +576,42 @@ function StudioAppInner() {
     }
     setUserSession(null);
     setShows([]);
+    setCharactersByShow({});
     setJobs([]);
+    setPendingSyncCount(0);
+    setSyncState('local_only');
   };
 
-  // --- Show CRUD ---
+  // --- Tool: Export Studio Profiles & Cast Backup (.json) ---
+  const handleExportStudioBackup = useCallback(() => {
+    const payload = {
+      app: 'BOBY AI MOVIE MAKER',
+      exportedAt: new Date().toISOString(),
+      showsCount: shows.length,
+      shows,
+      charactersByShow,
+      renderHistoryCount: jobs.length,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: 'application/json;charset=utf-8',
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const dateStamp = new Date().toISOString().slice(0, 10);
+    a.download = `BOBY_Studio_Backup_${dateStamp}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    pushNotification(
+      'Studio Backup Exported',
+      `Saved ${shows.length} show profiles & cast rosters to BOBY_Studio_Backup_${dateStamp}.json.`,
+      'success'
+    );
+  }, [shows, charactersByShow, jobs.length, pushNotification]);
+
+  // --- Show CRUD (Offline-First + Auto-Sync) ---
   const handleCreateNewShowWithPreset = async (preset?: {
     contentMode?: ContentMode;
     visualStyle?: VisualStyle;
@@ -383,10 +644,18 @@ function StudioAppInner() {
       updatedAtMs: Date.now(),
     };
 
-    if (userSession.isDemo || !userSession.emailVerified) {
-      persistDemoShows([newShow, ...shows]);
+    if (!isCloudUser) {
+      persistDemoShows((prev) => [newShow, ...prev]);
     } else {
-      await createShowInFirestore(newShow);
+      setShows((prev) => [newShow, ...prev]);
+      await executeOrQueueCloudMutation({
+        uid: userSession.uid,
+        entity: 'show',
+        action: 'create',
+        docId: newShow.id,
+        payload: newShow,
+      });
+      await refreshPendingSyncStatus(userSession.uid, true);
     }
     setActiveShowId(newShow.id);
     setActiveTab('studio');
@@ -394,58 +663,161 @@ function StudioAppInner() {
 
   const handleUpdateActiveShow = (patch: Partial<ShowProfile>) => {
     if (!activeShow || !userSession) return;
-    const updated: ShowProfile = {
+    const targetId = activeShow.id;
+
+    if (!isCloudUser) {
+      persistDemoShows((prev) =>
+        prev.map((s) => (s.id === targetId ? { ...s, ...patch, updatedAtMs: Date.now() } : s))
+      );
+      return;
+    }
+
+    // Optimistic UI update using functional updater + debounced offline-safe Firestore sync
+    let latestMerged: ShowProfile | null = null;
+    setShows((prev) =>
+      prev.map((s) => {
+        if (s.id === targetId) {
+          latestMerged = { ...s, ...patch, updatedAtMs: Date.now() };
+          return latestMerged;
+        }
+        return s;
+      })
+    );
+
+    const payloadToSync: ShowProfile = latestMerged || {
       ...activeShow,
       ...patch,
       updatedAtMs: Date.now(),
     };
 
-    if (userSession.isDemo || !userSession.emailVerified) {
-      persistDemoShows(shows.map((s) => (s.id === updated.id ? updated : s)));
-      return;
-    }
-
-    // Optimistic UI update + debounced Firestore sync
-    setShows((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
     if (showUpdateTimerRef.current) {
       clearTimeout(showUpdateTimerRef.current);
     }
+    const uid = userSession.uid;
     showUpdateTimerRef.current = setTimeout(() => {
-      void updateShowInFirestore(updated);
+      void executeOrQueueCloudMutation({
+        uid,
+        entity: 'show',
+        action: 'update',
+        docId: payloadToSync.id,
+        payload: payloadToSync,
+      }).then(() => refreshPendingSyncStatus(uid, true));
     }, 450);
   };
 
   const handleDuplicateShow = async (source: ShowProfile) => {
     if (!userSession) return;
+    const newShowId = `show_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const sourceChars = charactersByShow[source.id] || [];
+    const clonedChars: CharacterActor[] = sourceChars.map((ch, idx) => ({
+      ...ch,
+      id: `char_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 6)}`,
+      showId: newShowId,
+      ownerId: userSession.uid,
+      createdAtMs: Date.now(),
+      updatedAtMs: Date.now(),
+    }));
+
     const copy: ShowProfile = {
       ...source,
-      id: `show_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      id: newShowId,
       title: `${source.title} (Copy)`,
+      characterCount: clonedChars.length,
       createdAtMs: Date.now(),
       updatedAtMs: Date.now(),
     };
-    if (userSession.isDemo || !userSession.emailVerified) {
-      persistDemoShows([copy, ...shows]);
+
+    if (!isCloudUser) {
+      persistDemoShows((prev) => [copy, ...prev]);
+      if (clonedChars.length > 0) {
+        setCharactersByShow((prev) => {
+          const nextMap = { ...prev, [newShowId]: clonedChars };
+          try {
+            localStorage.setItem(DEMO_STORAGE_CHARS, JSON.stringify(nextMap));
+          } catch {
+            // Ignore
+          }
+          return nextMap;
+        });
+      }
     } else {
-      await createShowInFirestore(copy);
+      setShows((prev) => [copy, ...prev]);
+      if (clonedChars.length > 0) {
+        setCharactersByShow((prev) => ({ ...prev, [newShowId]: clonedChars }));
+      }
+      await executeOrQueueCloudMutation({
+        uid: userSession.uid,
+        entity: 'show',
+        action: 'create',
+        docId: copy.id,
+        payload: copy,
+      });
+      for (const ch of clonedChars) {
+        await executeOrQueueCloudMutation({
+          uid: userSession.uid,
+          entity: 'character',
+          action: 'create',
+          docId: ch.id,
+          parentId: newShowId,
+          payload: ch,
+        });
+      }
+      await refreshPendingSyncStatus(userSession.uid, true);
     }
-    pushNotification('Profile Duplicated', `Created "${copy.title}".`, 'info', 'shows');
+
+    pushNotification(
+      'Profile Duplicated',
+      `Created "${copy.title}" with ${clonedChars.length} locked actor${clonedChars.length === 1 ? '' : 's'}.`,
+      'info',
+      'shows'
+    );
   };
 
   const handleDeleteShow = async (showId: string) => {
     if (!userSession) return;
-    if (userSession.isDemo || !userSession.emailVerified) {
-      const remaining = shows.filter((s) => s.id !== showId);
-      persistDemoShows(remaining);
-      if (activeShowId === showId && remaining[0]) {
-        setActiveShowId(remaining[0].id);
+
+    // Clean up local characters map for deleted show
+    setCharactersByShow((prev) => {
+      if (!(showId in prev)) return prev;
+      const nextMap = { ...prev };
+      delete nextMap[showId];
+      if (!isCloudUser) {
+        try {
+          localStorage.setItem(DEMO_STORAGE_CHARS, JSON.stringify(nextMap));
+        } catch {
+          // Ignore
+        }
       }
+      return nextMap;
+    });
+
+    if (!isCloudUser) {
+      persistDemoShows((prev) => {
+        const remaining = prev.filter((s) => s.id !== showId);
+        if (activeShowId === showId && remaining[0]) {
+          setActiveShowId(remaining[0].id);
+        }
+        return remaining;
+      });
     } else {
-      await deleteShowFromFirestore(showId);
+      setShows((prev) => {
+        const remaining = prev.filter((s) => s.id !== showId);
+        if (activeShowId === showId && remaining[0]) {
+          setActiveShowId(remaining[0].id);
+        }
+        return remaining;
+      });
+      await executeOrQueueCloudMutation({
+        uid: userSession.uid,
+        entity: 'show',
+        action: 'delete',
+        docId: showId,
+      });
+      await refreshPendingSyncStatus(userSession.uid, true);
     }
   };
 
-  // --- Character CRUD ---
+  // --- Character CRUD (Offline-First + Auto-Sync) ---
   const handleSaveCharacter = async (char: CharacterActor, isNew: boolean) => {
     if (!userSession || !activeShow) return;
     const currentList = charactersByShow[activeShow.id] || [];
@@ -455,18 +827,26 @@ function StudioAppInner() {
 
     setCharactersByShow((prev) => {
       const updatedMap = { ...prev, [activeShow.id]: nextList };
-      if (userSession.isDemo || !userSession.emailVerified) {
-        localStorage.setItem(DEMO_STORAGE_CHARS, JSON.stringify(updatedMap));
+      if (!isCloudUser) {
+        try {
+          localStorage.setItem(DEMO_STORAGE_CHARS, JSON.stringify(updatedMap));
+        } catch {
+          // Ignore
+        }
       }
       return updatedMap;
     });
 
-    if (!userSession.isDemo && userSession.emailVerified) {
-      if (isNew) {
-        await createCharacterInFirestore(char);
-      } else {
-        await updateCharacterInFirestore(char);
-      }
+    if (isCloudUser) {
+      await executeOrQueueCloudMutation({
+        uid: userSession.uid,
+        entity: 'character',
+        action: isNew ? 'create' : 'update',
+        docId: char.id,
+        parentId: activeShow.id,
+        payload: char,
+      });
+      await refreshPendingSyncStatus(userSession.uid, true);
     }
 
     handleUpdateActiveShow({ characterCount: nextList.length });
@@ -484,14 +864,25 @@ function StudioAppInner() {
 
     setCharactersByShow((prev) => {
       const updatedMap = { ...prev, [activeShow.id]: nextList };
-      if (userSession.isDemo || !userSession.emailVerified) {
-        localStorage.setItem(DEMO_STORAGE_CHARS, JSON.stringify(updatedMap));
+      if (!isCloudUser) {
+        try {
+          localStorage.setItem(DEMO_STORAGE_CHARS, JSON.stringify(updatedMap));
+        } catch {
+          // Ignore
+        }
       }
       return updatedMap;
     });
 
-    if (!userSession.isDemo && userSession.emailVerified) {
-      await deleteCharacterFromFirestore(activeShow.id, charId);
+    if (isCloudUser) {
+      await executeOrQueueCloudMutation({
+        uid: userSession.uid,
+        entity: 'character',
+        action: 'delete',
+        docId: charId,
+        parentId: activeShow.id,
+      });
+      await refreshPendingSyncStatus(userSession.uid, true);
     }
     handleUpdateActiveShow({ characterCount: nextList.length });
   };
@@ -516,13 +907,20 @@ function StudioAppInner() {
 
       if (userSession && !userSession.isDemo && userSession.emailVerified) {
         try {
-          await updateRenderJobInFirestore(updatedJob);
+          await executeOrQueueCloudMutation({
+            uid: userSession.uid,
+            entity: 'renderJob',
+            action: 'update',
+            docId: updatedJob.id,
+            payload: updatedJob,
+          });
+          await refreshPendingSyncStatus(userSession.uid, true);
         } catch (err) {
           console.error('RenderJob progress sync warning:', err);
         }
       }
     },
-    [userSession]
+    [userSession, refreshPendingSyncStatus]
   );
 
   const launchOrResumePipelineJob = async (
@@ -547,7 +945,7 @@ function StudioAppInner() {
           setCreditsBalance((c) => Math.max(0, c - completedJob.sceneCount * 25));
           pushNotification(
             'Production Completed — ZIP Ready!',
-            `"${completedJob.showTitle}" (${completedJob.sceneCount} scenes) is ready in Ready Downloads.`,
+            `"${completedJob.showTitle}" (${completedJob.sceneCount} scenes + .SRT subtitles) is ready in Ready Downloads.`,
             'success',
             'downloads'
           );
@@ -597,10 +995,18 @@ function StudioAppInner() {
       updatedAtMs: Date.now(),
     };
 
-    if (userSession.isDemo || !userSession.emailVerified) {
-      persistDemoJobs([newJob, ...jobs]);
+    if (!isCloudUser) {
+      persistDemoJobs((prev) => [newJob, ...prev]);
     } else {
-      await createRenderJobInFirestore(newJob);
+      setJobs((prev) => [newJob, ...prev]);
+      await executeOrQueueCloudMutation({
+        uid: userSession.uid,
+        entity: 'renderJob',
+        action: 'create',
+        docId: newJob.id,
+        payload: newJob,
+      });
+      await refreshPendingSyncStatus(userSession.uid, true);
     }
 
     pushNotification(
@@ -661,16 +1067,23 @@ function StudioAppInner() {
 
   const handleDeleteJob = async (jobId: string) => {
     mediaPipeline.pauseJob(jobId);
-    if (!userSession || userSession.isDemo || !userSession.emailVerified) {
-      persistDemoJobs(jobs.filter((j) => j.id !== jobId));
+    if (!userSession || !isCloudUser) {
+      persistDemoJobs((prev) => prev.filter((j) => j.id !== jobId));
     } else {
-      await deleteRenderJobFromFirestore(jobId);
+      setJobs((prev) => prev.filter((j) => j.id !== jobId));
+      await executeOrQueueCloudMutation({
+        uid: userSession.uid,
+        entity: 'renderJob',
+        action: 'delete',
+        docId: jobId,
+      });
+      await refreshPendingSyncStatus(userSession.uid, true);
     }
   };
 
   if (!authReady) {
     return (
-      <div className="min-h-screen bg-[#09090b] flex items-center justify-center text-zinc-400 text-sm">
+      <div className="min-h-screen bg-zinc-50 dark:bg-[#09090b] flex items-center justify-center text-zinc-600 dark:text-zinc-400 text-sm">
         Initializing BOBY AI MOVIE MAKER Studio...
       </div>
     );
@@ -679,6 +1092,8 @@ function StudioAppInner() {
   if (!userSession) {
     return (
       <WelcomeAuthScreen
+        theme={theme}
+        onToggleTheme={handleToggleTheme}
         onGoogleLogin={handleGoogleLogin}
         onDemoMode={handleEnterDemoMode}
       />
@@ -691,12 +1106,18 @@ function StudioAppInner() {
   return (
     <StudioLayout
       user={userSession}
+      theme={theme}
+      onToggleTheme={handleToggleTheme}
       activeTab={activeTab}
       onSelectTab={setActiveTab}
       showsCount={shows.length}
       pendingCount={pendingCount}
       readyCount={readyCount}
       creditsBalance={creditsBalance}
+      syncState={syncState}
+      pendingSyncCount={pendingSyncCount}
+      onSyncNow={handleSyncNow}
+      onExportStudioBackup={handleExportStudioBackup}
       notifications={notifications}
       onMarkAllNotificationsRead={() =>
         setNotifications((prev) => prev.map((n) => ({ ...n, read: true })))
@@ -707,7 +1128,7 @@ function StudioAppInner() {
       onLogout={handleLogout}
     >
       {firestoreErrorBanner && (
-        <div className="mb-6 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-300">
+        <div className="mb-6 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-800 dark:text-amber-300">
           {firestoreErrorBanner}
         </div>
       )}
